@@ -1,0 +1,12 @@
+[package]
+name = "xfw"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+xfw-cli = { path = "../xfw-cli" }
+xfw-runtime = { path = "../xfw-runtime" }

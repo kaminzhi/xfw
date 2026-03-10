@@ -1,0 +1,26 @@
+[package]
+name = "xfw-runtime"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = ["lua_luajit"]
+lua_luajit = ["mlua/luajit"]
+lua_vanilla = ["mlua/lua54"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[dependencies]
+anyhow.workspace = true
+mlua.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+xfw-cli = { path = "../xfw-cli" }
+xfw-layout = { path = "../xfw-layout" }
+xfw-platform = { path = "../xfw-platform" }
+xfw-render = { path = "../xfw-render" }
+xfw-model = { path = "../xfw-model" }
