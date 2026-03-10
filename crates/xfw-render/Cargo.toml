@@ -1,10 +1,12 @@
 [package]
 name = "xfw-render"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 publish = false
 
 [dependencies]
 anyhow.workspace = true
 cosmic-text.workspace = true
 tiny-skia.workspace = true
+taffy.workspace = true
+xfw-layout = { path = "../xfw-layout" }
