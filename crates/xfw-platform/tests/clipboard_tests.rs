@@ -81,3 +81,104 @@ fn test_clipboard_content_variants() {
         _ => panic!("Expected image"),
     }
 }
+
+// === Extreme Test Cases ===
+
+#[test]
+fn test_clipboard_empty_text() {
+    // Empty string - should be valid
+    let mut clipboard = Clipboard::new();
+    clipboard.set_selection(ClipboardContent::Text("".to_string()));
+
+    let result = clipboard.get_selection();
+    assert!(result.is_some());
+    match result.unwrap() {
+        ClipboardContent::Text(s) => assert_eq!(s, ""),
+        _ => panic!("Expected empty text"),
+    }
+}
+
+#[test]
+fn test_clipboard_very_long_text() {
+    // Very long text - should not panic
+    let long_text = "x".repeat(1_000_000); // 1MB string
+    let mut clipboard = Clipboard::new();
+    clipboard.set_selection(ClipboardContent::Text(long_text.clone()));
+
+    let result = clipboard.get_selection();
+    assert!(result.is_some());
+    match result.unwrap() {
+        ClipboardContent::Text(s) => assert_eq!(s.len(), 1_000_000),
+        _ => panic!("Expected text"),
+    }
+}
+
+#[test]
+fn test_clipboard_huge_image() {
+    // Large image data - verify it can be stored without immediate panic
+    // (Actual memory pressure would occur at runtime, not in test)
+    let huge_image = vec![0u8; 10 * 1024 * 1024]; // 10MB
+    let mut clipboard = Clipboard::new();
+
+    // This should not panic during creation
+    clipboard.set_selection(ClipboardContent::Image(huge_image.clone()));
+
+    let result = clipboard.get_selection();
+    assert!(result.is_some());
+    match result.unwrap() {
+        ClipboardContent::Image(data) => assert_eq!(data.len(), 10 * 1024 * 1024),
+        _ => panic!("Expected image"),
+    }
+}
+
+#[test]
+fn test_clipboard_binary_data() {
+    // Binary data with null bytes - should be preserved
+    let binary_data = vec![0u8, 1, 2, 0, 255, 0, 1, 2];
+    let mut clipboard = Clipboard::new();
+    clipboard.set_selection(ClipboardContent::Image(binary_data.clone()));
+
+    let result = clipboard.get_selection();
+    assert!(result.is_some());
+    match result.unwrap() {
+        ClipboardContent::Image(data) => {
+            assert_eq!(data.len(), binary_data.len());
+        }
+        _ => panic!("Expected image"),
+    }
+}
+
+#[test]
+fn test_clipboard_multiple_offers() {
+    // Multiple offers - should handle gracefully
+    let mut clipboard = Clipboard::new();
+
+    for i in 0..100 {
+        clipboard.add_offer(i, ClipboardContent::Text(format!("offer{}", i)));
+    }
+
+    // All offers should be retrievable
+    for i in 0..100 {
+        assert!(clipboard.get_offer(i).is_some());
+    }
+
+    // Removing all should work
+    for i in 0..100 {
+        clipboard.remove_offer(i);
+        assert!(clipboard.get_offer(i).is_none());
+    }
+}
+
+#[test]
+fn test_clipboard_clear_when_empty() {
+    // Clear selection when already empty - should not panic
+    let mut clipboard = Clipboard::new();
+
+    // Clear multiple times
+    clipboard.clear_selection();
+    clipboard.clear_selection();
+    clipboard.clear_selection();
+
+    // Should still return None
+    assert!(clipboard.get_selection().is_none());
+}

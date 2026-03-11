@@ -86,3 +86,82 @@ fn test_xdg_window_manager_focused() {
     manager.set_focused(2);
     assert_eq!(manager.get_focused(), Some(2));
 }
+
+// === Extreme Test Cases ===
+
+#[test]
+fn test_xdg_config_zero_size() {
+    // Zero size windows
+    let config = XdgWindowConfig::new("Zero", 0, 0);
+    assert_eq!(config.width, 0);
+    assert_eq!(config.height, 0);
+}
+
+#[test]
+fn test_xdg_config_extreme_size() {
+    // Very large window dimensions
+    let config = XdgWindowConfig::new("Huge", 16384, 16384);
+    assert_eq!(config.width, 16384);
+    assert_eq!(config.height, 16384);
+}
+
+#[test]
+fn test_xdg_config_min_larger_than_max() {
+    // min > max - should be allowed (may cause issues at runtime but shouldn't panic)
+    let config = XdgWindowConfig::new("Invalid", 800, 600)
+        .with_min_size(1000, 1000)
+        .with_max_size(500, 500);
+
+    assert_eq!(config.min_width, 1000);
+    assert_eq!(config.max_width, 500);
+}
+
+#[test]
+fn test_xdg_config_empty_title() {
+    // Empty title
+    let config = XdgWindowConfig::new("", 800, 600);
+    assert_eq!(config.title, "");
+}
+
+#[test]
+fn test_xdg_config_very_long_title() {
+    // Very long title
+    let long_title = "x".repeat(1_000_000);
+    let config = XdgWindowConfig::new(&long_title, 800, 600);
+    assert_eq!(config.title.len(), 1_000_000);
+}
+
+#[test]
+fn test_xdg_config_no_app_id() {
+    // No app_id
+    let config = XdgWindowConfig::new("Test", 800, 600);
+    assert_eq!(config.app_id, Some("xfw".to_string()));
+
+    // Create with explicit None
+    let config2 = XdgWindowConfig::default();
+    assert!(config2.app_id.is_some());
+}
+
+#[test]
+fn test_xdg_window_manager_many_windows() {
+    // Many windows
+    let mut manager = XdgWindowManager::new();
+
+    for i in 0..1000 {
+        manager.set_focused(i);
+    }
+
+    assert_eq!(manager.get_focused(), Some(999));
+}
+
+#[test]
+fn test_xdg_window_manager_clear_focus() {
+    // Clear focus by setting to different values
+    let mut manager = XdgWindowManager::new();
+
+    manager.set_focused(1);
+    assert_eq!(manager.get_focused(), Some(1));
+
+    manager.set_focused(0);
+    assert_eq!(manager.get_focused(), Some(0));
+}

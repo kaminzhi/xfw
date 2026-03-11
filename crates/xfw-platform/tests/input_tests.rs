@@ -1,4 +1,4 @@
-use xfw_platform::input::{InputManager, InputState, KeyState, PointerAxis, PointerButton};
+use xfw_platform::input::{InputManager, InputState, KeyState, PointerButton};
 
 #[test]
 fn test_input_state_new() {
@@ -10,7 +10,7 @@ fn test_input_state_new() {
 }
 
 #[test]
-fn test_input_state_update_pointer_position() {
+fn test_input_state_update_pointer() {
     let mut state = InputState::new();
     state.update_pointer_position(100.0, 200.0);
     assert_eq!(state.pointer_x, 100.0);
@@ -24,7 +24,7 @@ fn test_input_manager_new() {
 }
 
 #[test]
-fn test_input_manager_surface_mapping() {
+fn test_input_manager_surface_map() {
     let mut manager = InputManager::new();
     manager.register_surface(1, 100);
     manager.register_surface(2, 200);
@@ -35,39 +35,28 @@ fn test_input_manager_surface_mapping() {
 }
 
 #[test]
-fn test_input_manager_hit_test() {
+fn test_input_manager_hit_test_basic() {
     let manager = InputManager::new();
 
-    // Surfaces: (id, x, y, width, height)
     let surfaces = vec![
-        (1, 0.0, 0.0, 100.0, 100.0),   // surface 1
-        (2, 100.0, 0.0, 100.0, 100.0), // surface 2
-        (3, 0.0, 100.0, 200.0, 100.0), // surface 3 (overlaps)
+        (1, 0.0, 0.0, 100.0, 100.0),
+        (2, 100.0, 0.0, 100.0, 100.0),
+        (3, 0.0, 100.0, 200.0, 100.0),
     ];
 
-    // Inside surface 1
     assert_eq!(manager.hit_test(50.0, 50.0, &surfaces), Some(1));
-
-    // Inside surface 2
     assert_eq!(manager.hit_test(150.0, 50.0, &surfaces), Some(2));
-
-    // Inside surface 3
     assert_eq!(manager.hit_test(50.0, 150.0, &surfaces), Some(3));
-
-    // Outside all surfaces
     assert_eq!(manager.hit_test(300.0, 300.0, &surfaces), None);
 }
 
 #[test]
-fn test_input_manager_hit_test_edge_cases() {
+fn test_input_manager_hit_test_edge() {
     let manager = InputManager::new();
     let surfaces = vec![(1, 0.0, 0.0, 100.0, 100.0)];
 
-    // On edge (should be inside based on implementation)
     assert_eq!(manager.hit_test(0.0, 0.0, &surfaces), Some(1));
     assert_eq!(manager.hit_test(99.0, 99.0, &surfaces), Some(1));
-
-    // Just outside
     assert_eq!(manager.hit_test(100.0, 100.0, &surfaces), None);
 }
 
@@ -85,4 +74,66 @@ fn test_pointer_button_from_u32() {
 fn test_key_state() {
     assert!(matches!(KeyState::Pressed, KeyState::Pressed));
     assert!(matches!(KeyState::Released, KeyState::Released));
+}
+
+// === Extreme Test Cases ===
+
+#[test]
+fn test_hit_test_empty_list() {
+    let manager = InputManager::new();
+    let surfaces: Vec<(u32, f32, f32, f32, f32)> = vec![];
+
+    assert_eq!(manager.hit_test(50.0, 50.0, &surfaces), None);
+}
+
+#[test]
+fn test_hit_test_negative_coords() {
+    let manager = InputManager::new();
+    let surfaces = vec![(1, 0.0, 0.0, 100.0, 100.0)];
+
+    assert_eq!(manager.hit_test(-10.0, 50.0, &surfaces), None);
+    assert_eq!(manager.hit_test(50.0, -10.0, &surfaces), None);
+    assert_eq!(manager.hit_test(-10.0, -10.0, &surfaces), None);
+}
+
+#[test]
+fn test_hit_test_extreme_coords() {
+    let manager = InputManager::new();
+    let surfaces = vec![(1, 0.0, 0.0, 100.0, 100.0)];
+
+    assert_eq!(manager.hit_test(10000.0, 10000.0, &surfaces), None);
+    assert_eq!(manager.hit_test(f64::MAX, f64::MAX, &surfaces), None);
+}
+
+#[test]
+fn test_hit_test_overlapping_windows() {
+    let manager = InputManager::new();
+    let surfaces = vec![(1, 0.0, 0.0, 1920.0, 1080.0), (2, 0.0, 0.0, 1920.0, 1080.0)];
+
+    let result = manager.hit_test(960.0, 540.0, &surfaces);
+    assert!(result.is_some());
+}
+
+#[test]
+fn test_hit_test_very_small_surface() {
+    let manager = InputManager::new();
+    // 1x1 pixel surface at position 50,50
+    let surfaces = vec![(1, 50.0, 50.0, 1.0, 1.0)];
+
+    // At exact position - inside
+    assert_eq!(manager.hit_test(50.0, 50.0, &surfaces), Some(1));
+    // Slightly offset - depends on implementation
+    let result = manager.hit_test(50.5, 50.5, &surfaces);
+    // Just verify it returns something valid (either Some or None)
+    assert!(result.is_none() || result == Some(1));
+}
+
+#[test]
+fn test_pointer_button_unknown_codes() {
+    assert_eq!(PointerButton::from(0), PointerButton::Other(0));
+    assert_eq!(
+        PointerButton::from(u32::MAX),
+        PointerButton::Other(u32::MAX)
+    );
+    assert_eq!(PointerButton::from(0xFFFF), PointerButton::Other(0xFFFF));
 }
