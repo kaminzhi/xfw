@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use mio::event::Event;
-use mio::net::EventedFd;
-use mio::{Events, Interest, Poll, PollOpt, Token};
+use mio::unix::SourceFd;
+use mio::{Events, Interest, Poll, Token};
 
 use crate::error::PlatformError;
 use crate::Result;
@@ -56,14 +56,14 @@ impl EventLoop {
         self.token_counter += 1;
 
         let fd = source.fd();
-        let evented = EventedFd::new(fd);
+        let mut source_fd = SourceFd(&fd);
 
         self.poll
+            .registry()
             .register(
-                &evented,
+                &mut source_fd,
                 token,
                 Interest::READABLE | Interest::WRITABLE,
-                PollOpt::edge(),
             )
             .expect("Failed to register event source");
 
@@ -77,14 +77,14 @@ impl EventLoop {
         let token = Token(self.token_counter);
         self.token_counter += 1;
 
-        let evented = EventedFd::new(fd);
+        let mut source_fd = SourceFd(&fd);
 
         self.poll
+            .registry()
             .register(
-                &evented,
+                &mut source_fd,
                 token,
                 Interest::READABLE | Interest::WRITABLE,
-                PollOpt::edge(),
             )
             .expect("Failed to register fd");
 
@@ -96,11 +96,7 @@ impl EventLoop {
     }
 
     pub fn unregister(&mut self, token: Token) {
-        if let Some(source) = self.sources.remove(&token) {
-            let fd = source.fd();
-            let evented = EventedFd::new(fd);
-            let _ = self.poll.unregister(&evented);
-        }
+        if let Some(_source) = self.sources.remove(&token) {}
         self.dispatchers.remove(&token);
     }
 
@@ -131,7 +127,7 @@ impl EventLoop {
             for event in events.iter() {
                 let token = event.token();
 
-                if token == Token(0) && (event.is_read_closed() || event.is_hup()) {
+                if token == Token(0) && (event.is_read_closed() || event.is_write_closed()) {
                     self.running = false;
                     break;
                 }
@@ -142,11 +138,6 @@ impl EventLoop {
                     }
                 }
             }
-
-            dispatcher.dispatch(
-                &WakeEventSource,
-                &Event::new(mio::Token(usize::MAX), mio::ready!(Ready::readable())),
-            );
 
             if let Ok(receiver) = self.wake_receiver.lock() {
                 while receiver.try_recv().is_ok() {
@@ -162,8 +153,6 @@ impl EventLoop {
         self.running = false;
     }
 }
-
-use mio::Ready;
 
 struct FdEventSource {
     fd: RawFd,
@@ -228,7 +217,8 @@ impl Timer {
         if self.repeat {
             self.deadline = Instant::now() + self.duration;
         } else {
-            self.deadline = Instant::now() + Duration::from_secs(u64::MAX);
+            self.deadline = Instant::now() + Duration::from_secs(365 * 24 * 60 * 60);
+            // 1 year
         }
     }
 }
