@@ -14,7 +14,7 @@ use std::sync::Mutex;
 
 use buffer::{BufferConfig, BufferPool, ShmBuffer};
 use connection::WaylandConnection;
-use error::{PlatformError, Result};
+use error::{buffer_error, Result};
 use event_loop::{EventDispatcher, EventLoop, EventSource};
 use input::{InputEvent, InputManager};
 use mio::event::Event;
@@ -178,9 +178,10 @@ impl PlatformSurface {
     }
 
     pub fn get_buffer(&mut self, surface_id: u32) -> Result<&mut ShmBuffer> {
-        let pool = self.buffer_pools.get_mut(&surface_id).ok_or_else(|| {
-            PlatformError::Buffer(format!("No buffer pool for surface {}", surface_id))
-        })?;
+        let pool = self
+            .buffer_pools
+            .get_mut(&surface_id)
+            .ok_or_else(|| buffer_error(format!("No buffer pool for surface {}", surface_id)))?;
 
         pool.acquire(&mut self.connection.queue())
     }

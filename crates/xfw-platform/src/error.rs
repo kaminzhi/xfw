@@ -1,28 +1,23 @@
 use std::fmt;
-use thiserror::Error;
 
-#[derive(Error, Debug)]
-pub enum PlatformError {
-    #[error("Wayland connection error: {0}")]
-    Wayland(String),
+pub type Result<T> = std::result::Result<T, anyhow::Error>;
 
-    #[error("Surface error: {0}")]
-    Surface(String),
-
-    #[error("Buffer error: {0}")]
-    Buffer(String),
-
-    #[error("Event loop error: {0}")]
-    EventLoop(String),
-
-    #[error("Protocol not supported: {0}")]
-    ProtocolNotSupported(String),
-
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("Render error: {0}")]
-    Render(String),
+pub fn wayland_error(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::anyhow!("Wayland connection error: {}", msg.into())
 }
 
-pub type Result<T> = std::result::Result<T, PlatformError>;
+pub fn surface_error(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::anyhow!("Surface error: {}", msg.into())
+}
+
+pub fn buffer_error(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::anyhow!("Buffer error: {}", msg.into())
+}
+
+pub fn event_loop_error(msg: impl Into<String>) -> anyhow::Error {
+    anyhow::anyhow!("Event loop error: {}", msg.into())
+}
+
+pub fn protocol_not_supported(name: impl Into<String>) -> anyhow::Error {
+    anyhow::anyhow!("Protocol not supported: {}", name.into())
+}

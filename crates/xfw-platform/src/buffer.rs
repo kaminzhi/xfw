@@ -9,7 +9,7 @@ use wayland_client::protocol::{wl_buffer, wl_shm, wl_shm_pool::WlShmPool};
 use wayland_client::QueueHandle;
 
 use crate::connection::WaylandDispatcher;
-use crate::error::PlatformError;
+use crate::error::buffer_error;
 use crate::Result;
 
 static BUFFER_ID: AtomicU32 = AtomicU32::new(0);
@@ -85,7 +85,7 @@ impl ShmBuffer {
         );
 
         let mapping = unsafe {
-            Mmap::map(&file).map_err(|e| PlatformError::Buffer(format!("Failed to mmap: {}", e)))?
+            Mmap::map(&file).map_err(|e| buffer_error(format!("Failed to mmap: {}", e)))?
         };
 
         let data = vec![0u8; size];
@@ -112,14 +112,14 @@ impl ShmBuffer {
             let name = CString::new("xfw-shm").unwrap();
             let fd = unsafe { memfd_create(name.as_ptr(), 0) };
             if fd < 0 {
-                return Err(PlatformError::Buffer(format!(
+                return Err(buffer_error(format!(
                     "memfd_create failed: {}",
                     IoError::last_os_error()
                 )));
             }
 
             if unsafe { libc::ftruncate(fd, size as libc::off_t) } < 0 {
-                return Err(PlatformError::Buffer(format!(
+                return Err(buffer_error(format!(
                     "ftruncate failed: {}",
                     IoError::last_os_error()
                 )));
@@ -139,10 +139,10 @@ impl ShmBuffer {
                 .create(true)
                 .truncate(true)
                 .open(&path)
-                .map_err(|e| PlatformError::Buffer(format!("Failed to create temp file: {}", e)))?;
+                .map_err(|e| buffer_error(format!("Failed to create temp file: {}", e)))?;
 
             file.set_len(size as u64)
-                .map_err(|e| PlatformError::Buffer(format!("Failed to set file size: {}", e)))?;
+                .map_err(|e| buffer_error(format!("Failed to set file size: {}", e)))?;
 
             Ok(file.into_raw_fd())
         }

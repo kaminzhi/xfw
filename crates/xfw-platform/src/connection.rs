@@ -17,7 +17,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
 };
 
-use crate::error::PlatformError;
+use crate::error::wayland_error;
 use crate::Result;
 
 pub struct WaylandState {
@@ -41,12 +41,12 @@ pub struct WaylandConnection {
 impl WaylandConnection {
     pub fn new() -> Result<Self> {
         let connection = Connection::connect_to_env()
-            .map_err(|e| PlatformError::Wayland(format!("Failed to connect to Wayland: {}", e)))?;
+            .map_err(|e| wayland_error(format!("Failed to connect to Wayland: {}", e)))?;
 
         let display = connection.display();
 
         let (globals, event_queue) = registry_queue_init::<WaylandDispatcher>(&connection)
-            .map_err(|e| PlatformError::Wayland(format!("Failed to init registry: {}", e)))?;
+            .map_err(|e| wayland_error(format!("Failed to init registry: {}", e)))?;
 
         let compositor: wl_compositor::WlCompositor =
             globals.bind(&event_queue.handle(), 1..=6, ()).unwrap();
@@ -89,7 +89,7 @@ impl WaylandConnection {
         self.connection
             .roundtrip()
             .map(|_: usize| ())
-            .map_err(|e| PlatformError::Wayland(format!("Roundtrip failed: {}", e)))
+            .map_err(|e| wayland_error(format!("Roundtrip failed: {}", e)))
     }
 
     pub fn state(&self) -> Arc<Mutex<WaylandState>> {

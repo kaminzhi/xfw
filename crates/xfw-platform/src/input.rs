@@ -3,8 +3,6 @@ use std::sync::mpsc::Sender;
 
 use wayland_client::protocol::{wl_pointer, wl_seat};
 
-use crate::error::PlatformError;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerButton {
     Left,

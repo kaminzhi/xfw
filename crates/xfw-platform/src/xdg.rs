@@ -5,7 +5,7 @@ use wayland_client::protocol::wl_surface;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel};
 
 use crate::connection::WaylandConnection;
-use crate::error::{PlatformError, Result};
+use crate::error::{protocol_not_supported, Result};
 
 static XDG_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -178,7 +178,7 @@ impl XdgWindow {
             .lock()
             .xdg_wm_base
             .clone()
-            .ok_or_else(|| PlatformError::ProtocolNotSupported("xdg_wm_base".to_string()))?;
+            .ok_or_else(|| protocol_not_supported("xdg_wm_base"))?;
 
         let surface = connection.get_surface()?;
         let mut qh = connection.queue();

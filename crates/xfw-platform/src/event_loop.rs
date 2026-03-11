@@ -8,7 +8,7 @@ use mio::event::Event;
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token};
 
-use crate::error::PlatformError;
+use crate::error::event_loop_error;
 use crate::Result;
 
 pub trait EventSource: Send + Sync {
@@ -32,8 +32,8 @@ pub struct EventLoop {
 
 impl EventLoop {
     pub fn new() -> Result<Self> {
-        let poll = Poll::new()
-            .map_err(|e| PlatformError::EventLoop(format!("Failed to create poll: {}", e)))?;
+        let poll =
+            Poll::new().map_err(|e| event_loop_error(format!("Failed to create poll: {}", e)))?;
 
         let (wake_sender, wake_receiver) = channel();
 
@@ -118,7 +118,7 @@ impl EventLoop {
 
             self.poll
                 .poll(&mut events, Some(loop_timeout))
-                .map_err(|e| PlatformError::EventLoop(format!("Poll failed: {}", e)))?;
+                .map_err(|e| event_loop_error(format!("Poll failed: {}", e)))?;
 
             if events.is_empty() {
                 continue;

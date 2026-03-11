@@ -5,7 +5,7 @@ use wayland_client::protocol::wl_surface;
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::connection::WaylandConnection;
-use crate::error::PlatformError;
+use crate::error::protocol_not_supported;
 use crate::Result;
 
 static LAYER_SURFACE_ID: AtomicU32 = AtomicU32::new(0);
@@ -136,7 +136,7 @@ impl LayerSurface {
             .lock()
             .layer_shell
             .clone()
-            .ok_or_else(|| PlatformError::ProtocolNotSupported("layer shell".to_string()))?;
+            .ok_or_else(|| protocol_not_supported("layer shell"))?;
 
         let surface = connection.get_surface()?;
         let mut qh = connection.queue();
