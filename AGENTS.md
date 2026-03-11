@@ -82,7 +82,6 @@ xfw/
 3. The **Dirty Rectangle Algorithm** state is managed by `xfw-runtime`, layout bounding boxes are provided by `xfw-layout`, and actual pixel mutation is strictly executed in `xfw-render`.
 4. **`xfw-platform`** is solely responsible for Wayland buffers and OS file descriptors. It should not know about Lua or Taffy.
 
----
 
 ## 🛠️ Language-Specific Guidelines
 
@@ -152,6 +151,49 @@ IPC.watch_file("/sys/class/power_supply/BAT0/capacity", "on_change", function(va
 end)
 
 ```
+
+---
+
+## 🌿 Git Workflow & Branching Policy (Strictly Enforced)
+
+**CRITICAL RULE: NEVER work directly on the `main` or `master` branch. You MUST follow this 3-step workflow.**
+
+### Step 1: Branch Creation (Before Coding)
+You MUST create and switch to a new branch BEFORE making any changes.
+- **Suggested Format:** `<work-type>/<2-3-word-summary>/<ticket-id>`
+- **MUST:** Use hyphens (`-`) to separate words. The summary MUST be short and in imperative present tense.
+- **MAY:** Include the work type (e.g., `feature`, `refactor`, `bugfix`, `hotfix`) and a corresponding ticket/story ID (if applicable).
+- **Example:** `git checkout -b feature/oauth-migration/ATL-244`
+
+### Step 2: Component-Based Committing (During Coding)
+Create a Git commit whenever a small component or sub-feature is completed **AND** compiles/runs successfully without errors. 
+
+1. **Verify:** Run build/syntax checks to prove code validity.
+2. **Stage:** Run `git add <specific_files>` (Avoid `git add .`).
+3. **Commit (Strict Format):** Your commit message MUST consist of a **Subject** and an optional **Body**, separated by a blank line.
+   - **Subject:** `<type>[optional scope]: <Description>`
+     - Allowed types: `feat`, `fix`, `chore`, `docs`, `refactor`, `style`, `test`, `perf`.
+     - Description MUST be: Max 50 chars, Capitalized, imperative present tense, and NO ending period.
+   - **Body:** Explain *what* and *why*. Max 72 chars per line. Capitalize each paragraph. Note breaking changes here if any.
+   
+   **Format Example:**
+    ```text
+    feat(api): Implement access right management
+    
+    Implement proper authorization for each service on development phase to 
+    validate during the API call. This prevents unauthorized data access.
+
+    ```
+
+*(Note: Use `git commit -m "<subject>" -m "<body>"` to pass multi-line messages securely in the terminal).*
+
+4. **Continue:** Proceed ONLY AFTER the commit is successful.
+
+### Step 3: End of Task Protocol (After Coding)
+
+You are strictly PROHIBITED from merging into `main` or `master`. When the request is fully completed, explicitly output this message:
+
+> "✅ **Task Completed.** All changes have been committed to the branch `[branch name]`. Please review the code, and manually merge this branch into `main` when you are ready."
 
 ---
 
