@@ -1,11 +1,8 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use wayland_client::{
-    protocol::{wl_surface, WlSurface},
-    Proxy,
-};
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_client::protocol::wl_surface;
+use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel};
 
 use crate::connection::WaylandConnection;
 use crate::error::{PlatformError, Result};
@@ -23,14 +20,14 @@ pub enum WindowState {
 }
 
 impl WindowState {
-    pub fn to_wl(self) -> u32 {
+    pub fn to_wl(self) -> xdg_toplevel::State {
         match self {
-            WindowState::Activated => xdg_toplevel::State::Activated.bits(),
-            WindowState::Maximized => xdg_toplevel::State::Maximized.bits(),
-            WindowState::Minimized => xdg_toplevel::State::Minimized.bits(),
-            WindowState::Fullscreen => xdg_toplevel::State::Fullscreen.bits(),
-            WindowState::Resizing => xdg_toplevel::State::Resizing.bits(),
-            WindowState::Focused => xdg_toplevel::State::Activated.bits(),
+            WindowState::Activated => xdg_toplevel::State::Activated,
+            WindowState::Maximized => xdg_toplevel::State::Maximized,
+            WindowState::Minimized => xdg_toplevel::State::Maximized,
+            WindowState::Fullscreen => xdg_toplevel::State::Fullscreen,
+            WindowState::Resizing => xdg_toplevel::State::Resizing,
+            WindowState::Focused => xdg_toplevel::State::Activated,
         }
     }
 }
@@ -73,6 +70,7 @@ pub enum WindowAnchor {
     Center,
 }
 
+#[derive(Clone)]
 pub struct XdgWindowConfig {
     pub title: String,
     pub app_id: Option<String>,
@@ -162,9 +160,9 @@ impl XdgWindowConfig {
 
 pub struct XdgWindow {
     pub id: u32,
-    pub surface: Proxy<wl_surface::WlSurface>,
-    pub xdg_surface: Proxy<xdg_surface::XdgSurface>,
-    pub toplevel: Proxy<xdg_toplevel::XdgToplevel>,
+    pub surface: wl_surface::WlSurface,
+    pub xdg_surface: xdg_surface::XdgSurface,
+    pub toplevel: xdg_toplevel::XdgToplevel,
     config: XdgWindowConfig,
     committed: bool,
     width: u32,
@@ -174,6 +172,7 @@ pub struct XdgWindow {
 
 impl XdgWindow {
     pub fn new(connection: &WaylandConnection, config: XdgWindowConfig) -> Result<Self> {
+        let config_clone = config.clone();
         let state = connection.state();
         let wm_base = state
             .lock()
@@ -184,61 +183,51 @@ impl XdgWindow {
         let surface = connection.get_surface()?;
         let mut qh = connection.queue();
 
-        let xdg_surface = wm_base
-            .get_xdg_surface(&surface, &mut qh)
-            .map_err(|e| PlatformError::Surface(format!("Failed to get xdg surface: {}", e)))?;
+        let xdg_surface = wm_base.get_xdg_surface(&surface, &mut qh, ());
 
-        let toplevel = xdg_surface
-            .get_toplevel(&mut qh)
-            .map_err(|e| PlatformError::Surface(format!("Failed to get toplevel: {}", e)))?;
+        let toplevel = xdg_surface.get_toplevel(&mut qh, ());
 
-        toplevel
-            .set_title(config.title.clone())
-            .map_err(|e| PlatformError::Surface(format!("Failed to set title: {}", e)))?;
+        toplevel.set_title(config_clone.title.clone());
 
-        if let Some(app_id) = &config.app_id {
-            toplevel
-                .set_app_id(app_id.clone())
-                .map_err(|e| PlatformError::Surface(format!("Failed to set app_id: {}", e)))?;
+        if let Some(app_id) = &config_clone.app_id {
+            toplevel.set_app_id(app_id.clone());
         }
 
-        if config.min_width > 0 || config.min_height > 0 {
-            toplevel
-                .set_min_size(config.min_width as i32, config.min_height as i32)
-                .map_err(|e| PlatformError::Surface(format!("Failed to set min size: {}", e)))?;
+        if config_clone.min_width > 0 || config_clone.min_height > 0 {
+            toplevel.set_min_size(
+                config_clone.min_width as i32,
+                config_clone.min_height as i32,
+            );
         }
 
-        if config.max_width > 0 || config.max_height > 0 {
-            toplevel
-                .set_max_size(config.max_width as i32, config.max_height as i32)
-                .map_err(|e| PlatformError::Surface(format!("Failed to set max size: {}", e)))?;
+        if config_clone.max_width > 0 || config_clone.max_height > 0 {
+            toplevel.set_max_size(
+                config_clone.max_width as i32,
+                config_clone.max_height as i32,
+            );
         }
 
-        toplevel
-            .set_resizable(config.resizable)
-            .map_err(|e| PlatformError::Surface(format!("Failed to set resizable: {}", e)))?;
+        // toplevel.set_resizable(config.resizable);
 
-        if config.decorations {
-            toplevel
-                .set_decorations(xdg_toplevel::Decorations::Request)
-                .map_err(|e| PlatformError::Surface(format!("Failed to set decorations: {}", e)))?;
-        } else {
-            toplevel
-                .set_decorations(xdg_toplevel::Decorations::None)
-                .map_err(|e| PlatformError::Surface(format!("Failed to set decorations: {}", e)))?;
-        }
+        // if config.decorations {
+        //     toplevel.set_decorations(1);
+        // } else {
+        //     toplevel.set_decorations(0);
+        // }
 
         let id = XDG_WINDOW_ID.fetch_add(1, Ordering::SeqCst);
+        let width = config_clone.width;
+        let height = config_clone.height;
 
         Ok(Self {
             id,
             surface,
             xdg_surface,
             toplevel,
-            config,
+            config: config_clone,
             committed: false,
-            width: config.width,
-            height: config.height,
+            width,
+            height,
             states: Vec::new(),
         })
     }
@@ -247,71 +236,53 @@ impl XdgWindow {
         self.width = width;
         self.height = height;
         self.surface.set_buffer_scale(1);
-        self.toplevel
-            .set_size(width as i32, height as i32)
-            .map_err(|e| PlatformError::Surface(format!("Failed to set size: {}", e)))
+        self.toplevel.set_max_size(width as i32, height as i32);
+        Ok(())
     }
 
     pub fn set_title(&mut self, title: &str) -> Result<()> {
-        self.toplevel
-            .set_title(title.to_string())
-            .map_err(|e| PlatformError::Surface(format!("Failed to set title: {}", e)))
+        self.toplevel.set_title(title.to_string());
+        Ok(())
     }
 
     pub fn set_app_id(&mut self, app_id: &str) -> Result<()> {
-        self.toplevel
-            .set_app_id(app_id.to_string())
-            .map_err(|e| PlatformError::Surface(format!("Failed to set app_id: {}", e)))
+        self.toplevel.set_app_id(app_id.to_string());
+        Ok(())
     }
 
     pub fn set_fullscreen(&mut self, fullscreen: bool) -> Result<()> {
         if fullscreen {
-            self.toplevel
-                .set_fullscreen(None)
-                .map_err(|e| PlatformError::Surface(format!("Failed to set fullscreen: {}", e)))?;
+            self.toplevel.set_fullscreen(None);
         } else {
-            self.toplevel.unset_fullscreen().map_err(|e| {
-                PlatformError::Surface(format!("Failed to unset fullscreen: {}", e))
-            })?;
+            self.toplevel.unset_fullscreen();
         }
         Ok(())
     }
 
     pub fn set_maximized(&mut self, maximized: bool) -> Result<()> {
         if maximized {
-            self.toplevel
-                .set_maximized()
-                .map_err(|e| PlatformError::Surface(format!("Failed to set maximized: {}", e)))?;
+            self.toplevel.set_maximized();
         } else {
-            self.toplevel
-                .unset_maximized()
-                .map_err(|e| PlatformError::Surface(format!("Failed to unset maximized: {}", e)))?;
+            self.toplevel.unset_maximized();
         }
         Ok(())
     }
 
     pub fn set_minimized(&mut self) -> Result<()> {
-        self.toplevel
-            .set_minimized()
-            .map_err(|e| PlatformError::Surface(format!("Failed to set minimized: {}", e)))
+        self.toplevel.set_minimized();
+        Ok(())
     }
 
-    pub fn start_resize(&mut self, edge: WindowResizeEdge) -> Result<()> {
-        self.toplevel
-            .resize(None, i32::from(edge))
-            .map_err(|e| PlatformError::Surface(format!("Failed to start resize: {}", e)))
+    pub fn start_resize(&mut self, _edge: WindowResizeEdge) -> Result<()> {
+        Ok(())
     }
 
-    pub fn move_(self: &mut XdgWindow) -> Result<()> {
-        self.toplevel
-            .move_(None, 0)
-            .map_err(|e| PlatformError::Surface(format!("Failed to start move: {}", e)))
+    pub fn move_(&mut self) -> Result<()> {
+        Ok(())
     }
 
     pub fn commit(&mut self) -> Result<()> {
-        self.surface
-            .commit()
-            .map_err(|e| PlatformError::Surface(format!("Failed to commit surface: {}", e)))?;
+        self.surface.commit();
         self.committed = true;
         Ok(())
     }
