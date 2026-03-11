@@ -10,7 +10,7 @@ pub mod xdg;
 use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use buffer::{BufferConfig, BufferPool, ShmBuffer};
 use connection::WaylandConnection;
@@ -22,7 +22,7 @@ use surface::{
     Anchor, KeyboardInteractivity, Layer, LayerSurface, LayerSurfaceConfig, SurfaceManager,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SurfaceGeometry {
     pub x: f32,
     pub y: f32,
@@ -80,8 +80,6 @@ pub trait PlatformEventHandler: Send {
     fn handle_event(&mut self, event: PlatformEvent);
 }
 
-pub type Result<T> = anyhow::Result<T, anyhow::Error>;
-
 pub struct PlatformSurface {
     connection: WaylandConnection,
     event_loop: EventLoop,
@@ -103,7 +101,7 @@ impl PlatformSurface {
 
         let mut event_loop = EventLoop::new()?;
 
-        event_loop.register_fd(connection.fd(), PlatformDispatcher)?;
+        event_loop.register_fd(connection.fd(), PlatformDispatcher);
 
         let (event_sender, event_receiver) = channel();
 
@@ -126,17 +124,19 @@ impl PlatformSurface {
     pub fn dispatch_loop(&mut self) -> Result<()> {
         tracing::info!("entering event loop");
 
-        self.event_loop.run(self, None)
+        self.event_loop.run(&mut PlatformDispatcher, None)
     }
 
     pub fn create_layer_surface(&mut self, config: LayerSurfaceConfig) -> Result<u32> {
+        let width = config.width;
+        let height = config.height;
         let surface = LayerSurface::new(&self.connection, config)?;
 
         let surface_id = surface.get_surface_id();
         self.surface_manager.add_surface(surface);
 
         let shm = self.connection.state().lock().shm.clone();
-        let buffer_config = BufferConfig::new(config.width.max(1), config.height.max(1));
+        let buffer_config = BufferConfig::new(width.max(1), height.max(1));
         self.buffer_pools
             .insert(surface_id, BufferPool::new(shm, buffer_config));
 
@@ -196,13 +196,13 @@ impl PlatformSurface {
     }
 
     pub fn get_surface_geometry(&self, surface_id: u32) -> Option<SurfaceGeometry> {
-        self.surface_geometries.get(&surface_id).copied()
+        self.surface_geometries.get(&surface_id).cloned()
     }
 
     pub fn get_all_surfaces(&self) -> Vec<(u32, SurfaceGeometry)> {
         self.surface_geometries
             .iter()
-            .map(|(&id, &geo)| (id, geo))
+            .map(|(&id, geo)| (id, geo.clone()))
             .collect()
     }
 
@@ -220,7 +220,7 @@ impl PlatformSurface {
         self.connection.fd()
     }
 
-    pub fn roundtrip(&self) -> Result<()> {
+    pub fn roundtrip(&mut self) -> Result<()> {
         self.connection.roundtrip()
     }
 
@@ -228,7 +228,7 @@ impl PlatformSurface {
         let surfaces: Vec<_> = self
             .surface_geometries
             .iter()
-            .map(|(&id, &geo)| (id, geo.x, geo.y, geo.width as f32, geo.height as f32))
+            .map(|(&id, geo)| (id, geo.x, geo.y, geo.width as f32, geo.height as f32))
             .collect();
         self.input_manager.hit_test(x, y, &surfaces)
     }
