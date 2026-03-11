@@ -7,14 +7,45 @@ Wayland 平台層，負責窗口管理、事件循環、輸入處理和緩冲區
 ```
 crates/xfw-platform/src/
 ├── lib.rs          # 主入口，PlatformSurface 導出
-├── connection.rs   # Wayland 連接管理
+├── connection.rs   # Wayland 連接管理 (wayland-client 0.31)
 ├── surface.rs      # Layer Shell 表面支援
 ├── xdg.rs          # XDG 窗口支援
 ├── buffer.rs       # SHM Buffer 池管理
-├── event_loop.rs   # mio/epoll 事件循環
+├── event_loop.rs   # mio 1.x 事件循環
 ├── input.rs        # 輸入事件處理
 ├── clipboard.rs    # 剪貼簿支援
 └── error.rs        # 錯誤類型定義
+```
+
+## 依賴項
+
+```toml
+[dependencies]
+anyhow.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smithay-client-toolkit.workspace = true
+tracing.workspace = true
+memmap2 = "0.9"
+mio.workspace = true
+wayland-client.workspace = true
+wayland-protocols.workspace = true
+wayland-protocols-wlr = "0.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+```
+
+## 系統需求
+
+- Linux 系統
+- Wayland 會話
+- 依賴 `libxkbcommon-dev` (編譯時)
+
+```bash
+# Ubuntu/Debian
+sudo apt install libxkbcommon-dev pkg-config
 ```
 
 ## 核心類型
@@ -30,7 +61,8 @@ pub struct PlatformSurface {
     surface_manager: SurfaceManager,
     input_manager: InputManager,
     buffer_pools: HashMap<u32, BufferPool>,
-    // ...
+    event_receiver: Option<Receiver<PlatformEvent>>,
+    surface_geometries: HashMap<u32, SurfaceGeometry>,
 }
 ```
 
@@ -46,22 +78,52 @@ pub struct PlatformSurface {
 | `get_buffer(id)` | 獲取可用 Buffer |
 | `attach_buffer(id, buffer)` | 附加 Buffer 到表面 |
 | `get_all_surfaces()` | 獲取所有表面幾何信息 |
+| `get_surface_geometry(id)` | 獲取指定表面幾何信息 |
 | `get_input_surface_under_cursor(x, y)` | 命中測試 |
+| `poll_events()` | 獲取待處理的事件 |
+| `roundtrip()` | 執行 Wayland roundtrip |
 | `quit()` | 退出事件循環 |
+
+### SurfaceGeometry
+
+```rust
+#[derive(Debug, Clone, Copy)]
+pub struct SurfaceGeometry {
+    pub x: f32,
+    pub y: f32,
+    pub width: u32,
+    pub height: u32,
+}
+```
 
 ## Layer Shell 表面
 
 ### LayerSurfaceConfig
 
 ```rust
+#[derive(Clone)]
 pub struct LayerSurfaceConfig {
-    pub anchor: Anchor,              // 錨點位置
-    pub layer: Layer,                // 層級
+    pub anchor: Anchor,                        // 錨點位置
+    pub layer: Layer,                          // 層級
     pub keyboard_interactivity: KeyboardInteractivity,
-    pub margin: (i32, i32, i32, i32), // 邊距 (上, 右, 下, 左)
-    pub namespace: String,           // 命名空間
+    pub margin: (i32, i32, i32, i32),          // 邊距 (上, 右, 下, 左)
+    pub namespace: String,                     // 命名空間
     pub width: u32,
     pub height: u32,
+}
+
+impl Default for LayerSurfaceConfig {
+    fn default() -> Self {
+        Self {
+            anchor: Anchor::Top,
+            layer: Layer::Top,
+            keyboard_interactivity: KeyboardInteractivity::None,
+            margin: (0, 0, 0, 0),
+            namespace: "xfw".to_string(),
+            width: 0,
+            height: 0,
+        }
+    }
 }
 ```
 
@@ -69,28 +131,41 @@ pub struct LayerSurfaceConfig {
 
 ```
 ┌──────────────────────────────────────┐
-│ TopLeft    │      Top      │TopRight │
-├────────────┼──────────────┼──────────┤
-│            │              │          │
-│   Left     │    All       │  Right   │
-│            │              │          │
-├────────────┼──────────────┼──────────┤
-│BottomLeft  │   Bottom     │BtmRight  │
+│ TopLeft      │ Top      │ TopRight   │
+├──────────────┼──────────┼────────────┤
+│              │          │            │
+│    Left      │   All    │   Right    │
+│              │          │            │
+├──────────────┼──────────┼────────────┤
+│ BottomLeft   │ Bottom   │ BtmRight   │
 └──────────────────────────────────────┘
 ```
 
 ```rust
-enum Anchor {
-    Top, Bottom, Left, Right,
-    TopLeft, TopRight, BottomLeft, BottomRight,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Anchor {
+    Top,
+    Bottom,
+    Left,
+    Right,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
     All,
+}
+
+impl Anchor {
+    /// 轉換為 wayland 協議的 Anchor 類型
+    pub fn to_wl(self) -> zwlr_layer_surface_v1::Anchor
 }
 ```
 
 ### Layer
 
 ```rust
-enum Layer {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
     Background,  // 背景層
     Bottom,      // 底部層
     Top,         // 頂部層 (常用於狀態欄)
@@ -98,9 +173,22 @@ enum Layer {
 }
 ```
 
+### KeyboardInteractivity
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyboardInteractivity {
+    None,      // 不請求鍵盤
+    Exclusive, // 請求排他鍵盤焦點
+    OnDemand,  // 請求焦點（按下時）
+}
+```
+
 ### 使用範例
 
 ```rust
+use xfw_platform::{PlatformSurface, surface::{Anchor, Layer, LayerSurfaceConfig, KeyboardInteractivity}};
+
 let mut platform = PlatformSurface::new()?;
 
 let config = LayerSurfaceConfig {
@@ -125,6 +213,7 @@ platform.dispatch_loop()?;
 ### XdgWindowConfig
 
 ```rust
+#[derive(Clone)]
 pub struct XdgWindowConfig {
     pub title: String,
     pub app_id: Option<String>,
@@ -156,6 +245,23 @@ let config = XdgWindowConfig::new("My App", 1024, 768)
     .maximized(false);
 ```
 
+### WindowResizeEdge
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowResizeEdge {
+    None,
+    Top,
+    Bottom,
+    Left,
+    Right,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+```
+
 ### XdgWindow 方法
 
 | 方法 | 說明 |
@@ -166,8 +272,8 @@ let config = XdgWindowConfig::new("My App", 1024, 768)
 | `set_fullscreen(bool)` | 切換全屏 |
 | `set_maximized(bool)` | 切換最大化 |
 | `set_minimized()` | 最小化 |
-| `start_resize(edge)` | 開始調整大小 |
-| `move_()` | 開始移動 |
+| `start_resize(edge)` | 開始調整大小 (當前為空操作) |
+| `move_()` | 開始移動 (當前為空操作) |
 | `commit()` | 提交更改 |
 
 ## Buffer 管理
@@ -181,12 +287,19 @@ pub struct BufferConfig {
     pub stride: u32,
     pub format: u32,  // wl_shm::Format
 }
+
+impl BufferConfig {
+    pub fn new(width: u32, height: u32) -> Self
+    pub fn with_stride(self, stride: u32) -> Self
+    pub fn with_format(self, format: u32) -> Self
+    pub fn size(&self) -> usize
+}
 ```
 
 ```rust
 let config = BufferConfig::new(1920, 1080)
     .with_stride(7680)  // 自定義 stride
-    .with_format(wl_shm::Format::Argb8888);
+    .with_format(wl_shm::Format::Xrgb8888 as u32);
 ```
 
 ### BufferPool
@@ -205,11 +318,32 @@ let data = buffer.data();
 
 // 釋放 Buffer
 pool.release(buffer.id);
+
+// 調整 Buffer 大小
+pool.resize(width, height, qh)?;
 ```
 
-## 事件循環
+### ShmBuffer
 
-### EventLoop (mio)
+```rust
+pub struct ShmBuffer {
+    pub id: u32,
+    pub buffer: wl_buffer::WlBuffer,
+    pub config: BufferConfig,
+    // 內部字段...
+}
+
+impl ShmBuffer {
+    pub fn data(&mut self) -> &mut [u8]
+    pub fn set_in_use(&mut self, in_use: bool)
+    pub fn is_in_use(&self) -> bool
+    pub fn width(&self) -> u32
+    pub fn height(&self) -> u32
+    pub fn stride(&self) -> u32
+}
+```
+
+## 事件循環 (mio 1.x)
 
 基於 mio 的事件循環，實現零 CPU 佔用的 idle 等待：
 
@@ -223,6 +357,20 @@ event_loop.register_fd(fd, MyDispatcher);
 event_loop.run(dispatcher, Some(Duration::from_millis(100)))?;
 ```
 
+### EventLoop 方法
+
+```rust
+impl EventLoop {
+    pub fn new() -> Result<Self>
+    pub fn register<S>(&mut self, source: S, dispatcher: impl EventDispatcher + 'static) -> Token
+    pub fn register_fd(&mut self, fd: RawFd, dispatcher: impl EventDispatcher + 'static) -> Token
+    pub fn unregister(&mut self, token: Token)
+    pub fn wake(&self)
+    pub fn run<D>(&mut self, dispatcher: &mut D, timeout: Option<Duration>) -> Result<()>
+    pub fn stop(&mut self)
+}
+```
+
 ### Timer
 
 ```rust
@@ -231,10 +379,26 @@ let timer = Timer::new(Duration::from_secs(1));
 
 // 重複定時器
 let mut repeating = Timer::repeating(Duration::from_millis(100));
-
 if repeating.is_ready() {
     // 處理定時事件
     repeating.reset();
+}
+```
+
+### EventDispatcher trait
+
+```rust
+pub trait EventDispatcher: Send {
+    fn dispatch(&mut self, source: &dyn EventSource, event: &Event);
+}
+```
+
+### EventSource trait
+
+```rust
+pub trait EventSource: Send + Sync {
+    fn fd(&self) -> RawFd;
+    fn ready(&self, event: &Event, dispatcher: &mut dyn EventDispatcher);
 }
 ```
 
@@ -261,11 +425,31 @@ if let Some(hit_id) = manager.hit_test(mouse_x, mouse_y, &surfaces) {
 ### InputEvent
 
 ```rust
-enum InputEvent {
+pub enum InputEvent {
     Pointer(PointerEvent),
     Keyboard(KeyboardEvent),
     PointerEnter { surface_id: u32, x: f64, y: f64 },
     PointerLeave { surface_id: u32 },
+}
+```
+
+### PointerEvent
+
+```rust
+pub struct PointerEvent {
+    pub x: f64,
+    pub y: f64,
+    pub button: u32,
+    pub state: PointerState,
+}
+```
+
+### KeyboardEvent
+
+```rust
+pub struct KeyboardEvent {
+    pub key: u32,
+    pub state: KeyState,
 }
 ```
 
@@ -274,47 +458,109 @@ enum InputEvent {
 平台層發送的事件，供 runtime 訂閱：
 
 ```rust
-enum PlatformEvent {
+#[derive(Debug, Clone)]
+pub enum PlatformEvent {
     PointerEnter { surface_id: u32, x: f64, y: f64 },
     PointerLeave { surface_id: u32 },
     PointerMove { surface_id: u32, x: f64, y: f64 },
     PointerButton { surface_id: u32, button: u32, pressed: bool },
     PointerAxis { surface_id: u32, horizontal: f64, vertical: f64 },
     Keyboard { surface_id: u32, key: u32, pressed: bool },
+    Keymap { fd: RawFd, size: u32 },
     ConfigChanged { width: u32, height: u32 },
+    DataReceived { surface_id: u32, data: Vec<u8> },
     Wake,
     Quit,
 }
 ```
 
-## 依賴項
+### PlatformEventHandler trait
 
-```toml
-[dependencies]
-anyhow.workspace = true
-parking_lot.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-smithay-client-toolkit.workspace = true
-tracing.workspace = true
-mio.workspace = true
-wayland-client.workspace = true
-wayland-protocols.workspace = true
-
-[target.'cfg(unix)'.dependencies]
-libc.workspace = true
+```rust
+pub trait PlatformEventHandler: Send {
+    fn handle_event(&mut self, event: PlatformEvent);
+}
 ```
 
-## 系統需求
+## Wayland 連接管理
 
-- Linux 系統
-- Wayland 會話
-- 依賴 `libxkbcommon-dev` (編譯時)
+### WaylandConnection
 
-```bash
-# Ubuntu/Debian
-sudo apt install libxkbcommon-dev pkg-config
+```rust
+pub struct WaylandConnection {
+    connection: Connection,
+    event_queue: EventQueue<WaylandDispatcher>,
+    globals: GlobalList,
+    state: Arc<Mutex<WaylandState>>,
+    fd: RawFd,
+}
+
+impl WaylandConnection {
+    pub fn new() -> Result<Self>
+    pub fn fd(&self) -> RawFd
+    pub fn roundtrip(&mut self) -> Result<()>
+    pub fn state(&self) -> Arc<Mutex<WaylandState>>
+    pub fn get_surface(&self) -> Result<wl_surface::WlSurface>
+    pub fn queue(&self) -> QueueHandle<WaylandDispatcher>
+}
 ```
+
+### WaylandState
+
+```rust
+pub struct WaylandState {
+    pub display: wl_display::WlDisplay,
+    pub compositor: wl_compositor::WlCompositor,
+    pub subcompositor: wl_subcompositor::WlSubcompositor,
+    pub shm: wl_shm::WlShm,
+    pub layer_shell: Option<ZwlrLayerShellV1>,
+    pub xdg_wm_base: Option<XdgWmBase>,
+    pub registry: HashMap<String, Global>,
+}
+```
+
+## API 更新說明 (wayland-client 0.31, mio 1.x)
+
+### wayland-client 0.31 變更
+
+1. **Dispatch trait 簽名變更**:
+   - 第一個參數從 `&mut WaylandState` 改為 `&mut WaylandDispatcher`
+   - `QueueHandle` 的泛型參數改為 `WaylandDispatcher`
+
+2. **創建對象時需要傳入 user data**:
+   ```rust
+   // 舊 API
+   shm.create_pool(fd, size, qh)
+   
+   // 新 API (0.31)
+   shm.create_pool(borrowed_fd, size, qh, ())
+   ```
+
+3. **方法調用不再返回 Result**:
+   ```rust
+   // 舊 API
+   surface.commit().map_err(...)
+   
+   // 新 API (0.31)
+   surface.commit()
+   ```
+
+### mio 1.x 變更
+
+1. **註冊方式變更**:
+   ```rust
+   // 舊 API
+   poll.register(source_fd, token, Interest::READABLE | Interest::WRITABLE)
+   
+   // 新 API (1.x)
+   poll.registry().register(&mut source_fd, token, Interest::READABLE | Interest::WRITABLE)
+   ```
+
+2. **使用 SourceFd 包裝 RawFd**:
+   ```rust
+   use mio::unix::SourceFd;
+   let mut source_fd = SourceFd(&fd);
+   ```
 
 ## 測試
 
@@ -322,7 +568,10 @@ sudo apt install libxkbcommon-dev pkg-config
 # 運行所有測試
 cargo test -p xfw-platform
 
-# 運行特定模塊測試
-cargo test -p xfw-platform buffer_tests
-cargo test -p xfw-platform xdg_tests
+# 運行特定測試文件
+cargo test -p xfw-platform --test buffer_tests
+cargo test -p xfw-platform --test surface_tests
+cargo test -p xfw-platform --test xdg_tests
+cargo test -p xfw-platform --test event_loop_tests
+cargo test -p xfw-platform --test input_tests
 ```
