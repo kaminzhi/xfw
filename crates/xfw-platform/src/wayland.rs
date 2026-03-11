@@ -5,13 +5,14 @@ use wayland_client::Connection;
 use crate::error::PlatformResult;
 
 pub struct WaylandConnectionInner {
-    pub connection: Connection,
+    #[allow(dead_code)]
+    connection: Connection,
+    fd: i32,
 }
 
 pub struct WaylandConnection {
     pub display: String,
-    pub socket_name: Option<String>,
-    pub inner: Option<WaylandConnectionInner>,
+    inner: Option<WaylandConnectionInner>,
 }
 
 impl WaylandConnection {
@@ -25,7 +26,6 @@ impl WaylandConnection {
                 tracing::warn!(error = %e, "failed to connect to Wayland, running in headless mode");
                 return Ok(Self {
                     display: wayland_display,
-                    socket_name: None,
                     inner: None,
                 });
             }
@@ -37,8 +37,7 @@ impl WaylandConnection {
 
         Ok(Self {
             display: wayland_display,
-            socket_name: None,
-            inner: Some(WaylandConnectionInner { connection }),
+            inner: Some(WaylandConnectionInner { connection, fd }),
         })
     }
 
@@ -46,10 +45,12 @@ impl WaylandConnection {
         self.inner.is_some()
     }
 
+    pub fn is_headless(&self) -> bool {
+        self.inner.is_none()
+    }
+
     pub fn get_fd(&self) -> Option<i32> {
-        self.inner
-            .as_ref()
-            .map(|i| i.connection.as_fd().as_raw_fd())
+        self.inner.as_ref().map(|i| i.fd)
     }
 }
 
