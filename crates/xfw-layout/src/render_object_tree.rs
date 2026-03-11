@@ -1,6 +1,44 @@
 use std::collections::HashMap;
 use taffy::prelude::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Color {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+
+impl Color {
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() == 6 {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
+            Some(Self { r, g, b, a: 1.0 })
+        } else if hex.len() == 8 {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
+            let a = u8::from_str_radix(&hex[6..8], 16).ok()? as f32 / 255.0;
+            Some(Self { r, g, b, a })
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RenderStyle {
+    pub color: Option<Color>,
+    pub font_size: Option<f32>,
+    pub background_color: Option<Color>,
+    pub border_color: Option<Color>,
+    pub border_radius: Option<f32>,
+    pub opacity: Option<f32>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
     pub x: f32,
@@ -85,47 +123,68 @@ pub enum Kind {
 pub enum RenderObject {
     Container {
         id: Option<String>,
-        style: Style,
+        layout_style: Style,
+        render_style: RenderStyle,
         rect: Rect,
         children: Vec<RenderObject>,
     },
     Text {
         id: Option<String>,
-        style: Style,
+        layout_style: Style,
+        render_style: RenderStyle,
         rect: Rect,
         content: String,
     },
     Image {
         id: Option<String>,
-        style: Style,
+        layout_style: Style,
+        render_style: RenderStyle,
         rect: Rect,
         path: String,
     },
 }
 
 impl RenderObject {
-    pub fn container(id: Option<String>, style: Style, children: Vec<RenderObject>) -> Self {
+    pub fn container(
+        id: Option<String>,
+        layout_style: Style,
+        render_style: RenderStyle,
+        children: Vec<RenderObject>,
+    ) -> Self {
         Self::Container {
             id,
-            style,
+            layout_style,
+            render_style,
             rect: Rect::default(),
             children,
         }
     }
 
-    pub fn text(id: Option<String>, style: Style, content: String) -> Self {
+    pub fn text(
+        id: Option<String>,
+        layout_style: Style,
+        render_style: RenderStyle,
+        content: String,
+    ) -> Self {
         Self::Text {
             id,
-            style,
+            layout_style,
+            render_style,
             rect: Rect::default(),
             content,
         }
     }
 
-    pub fn image(id: Option<String>, style: Style, path: String) -> Self {
+    pub fn image(
+        id: Option<String>,
+        layout_style: Style,
+        render_style: RenderStyle,
+        path: String,
+    ) -> Self {
         Self::Image {
             id,
-            style,
+            layout_style,
+            render_style,
             rect: Rect::default(),
             path,
         }
@@ -139,19 +198,35 @@ impl RenderObject {
         }
     }
 
-    pub fn style(&self) -> &Style {
+    pub fn layout_style(&self) -> &Style {
         match self {
-            Self::Container { style, .. } => style,
-            Self::Text { style, .. } => style,
-            Self::Image { style, .. } => style,
+            Self::Container { layout_style, .. } => layout_style,
+            Self::Text { layout_style, .. } => layout_style,
+            Self::Image { layout_style, .. } => layout_style,
         }
     }
 
-    pub fn style_mut(&mut self) -> &mut Style {
+    pub fn layout_style_mut(&mut self) -> &mut Style {
         match self {
-            Self::Container { style, .. } => style,
-            Self::Text { style, .. } => style,
-            Self::Image { style, .. } => style,
+            Self::Container { layout_style, .. } => layout_style,
+            Self::Text { layout_style, .. } => layout_style,
+            Self::Image { layout_style, .. } => layout_style,
+        }
+    }
+
+    pub fn render_style(&self) -> &RenderStyle {
+        match self {
+            Self::Container { render_style, .. } => render_style,
+            Self::Text { render_style, .. } => render_style,
+            Self::Image { render_style, .. } => render_style,
+        }
+    }
+
+    pub fn render_style_mut(&mut self) -> &mut RenderStyle {
+        match self {
+            Self::Container { render_style, .. } => render_style,
+            Self::Text { render_style, .. } => render_style,
+            Self::Image { render_style, .. } => render_style,
         }
     }
 

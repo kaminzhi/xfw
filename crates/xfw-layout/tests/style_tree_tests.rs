@@ -1,20 +1,36 @@
 use taffy::style::Style as TaffyStyle;
-use xfw_layout::{RenderObject, RenderObjectTree};
+use xfw_layout::{RenderObject, RenderObjectTree, RenderStyle};
 
 #[test]
 fn test_render_object_tree_new() {
-    let node = RenderObject::container(Some("root".to_string()), TaffyStyle::default(), vec![]);
+    let node = RenderObject::container(
+        Some("root".to_string()),
+        TaffyStyle::default(),
+        RenderStyle::default(),
+        vec![],
+    );
     let tree = RenderObjectTree::new(node);
     assert_eq!(tree.node_count(), 1);
 }
 
 #[test]
 fn test_render_object_tree_with_children() {
-    let child1 = RenderObject::container(Some("child1".to_string()), TaffyStyle::default(), vec![]);
-    let child2 = RenderObject::container(Some("child2".to_string()), TaffyStyle::default(), vec![]);
+    let child1 = RenderObject::container(
+        Some("child1".to_string()),
+        TaffyStyle::default(),
+        RenderStyle::default(),
+        vec![],
+    );
+    let child2 = RenderObject::container(
+        Some("child2".to_string()),
+        TaffyStyle::default(),
+        RenderStyle::default(),
+        vec![],
+    );
     let root = RenderObject::container(
         Some("root".to_string()),
         TaffyStyle::default(),
+        RenderStyle::default(),
         vec![child1, child2],
     );
     let tree = RenderObjectTree::new(root);
@@ -23,9 +39,18 @@ fn test_render_object_tree_with_children() {
 
 #[test]
 fn test_find_by_id() {
-    let child = RenderObject::container(Some("target".to_string()), TaffyStyle::default(), vec![]);
-    let root =
-        RenderObject::container(Some("root".to_string()), TaffyStyle::default(), vec![child]);
+    let child = RenderObject::container(
+        Some("target".to_string()),
+        TaffyStyle::default(),
+        RenderStyle::default(),
+        vec![],
+    );
+    let root = RenderObject::container(
+        Some("root".to_string()),
+        TaffyStyle::default(),
+        RenderStyle::default(),
+        vec![child],
+    );
     let tree = RenderObjectTree::new(root);
 
     let found = tree.find_by_id("target");
@@ -37,16 +62,28 @@ fn test_find_by_id() {
 
 #[test]
 fn test_find_by_prefix() {
-    let node1 = RenderObject::container(Some("battery".to_string()), TaffyStyle::default(), vec![]);
+    let node1 = RenderObject::container(
+        Some("battery".to_string()),
+        TaffyStyle::default(),
+        RenderStyle::default(),
+        vec![],
+    );
     let node2 = RenderObject::container(
         Some("battery_level".to_string()),
         TaffyStyle::default(),
+        RenderStyle::default(),
         vec![],
     );
-    let node3 = RenderObject::container(Some("volume".to_string()), TaffyStyle::default(), vec![]);
+    let node3 = RenderObject::container(
+        Some("volume".to_string()),
+        TaffyStyle::default(),
+        RenderStyle::default(),
+        vec![],
+    );
     let root = RenderObject::container(
         Some("root".to_string()),
         TaffyStyle::default(),
+        RenderStyle::default(),
         vec![node1, node2, node3],
     );
     let tree = RenderObjectTree::new(root);
@@ -60,6 +97,7 @@ fn test_text_node() {
     let node = RenderObject::text(
         Some("text1".to_string()),
         TaffyStyle::default(),
+        RenderStyle::default(),
         "Hello".to_string(),
     );
     let tree = RenderObjectTree::new(node);
@@ -77,6 +115,7 @@ fn test_image_node() {
     let node = RenderObject::image(
         Some("img1".to_string()),
         TaffyStyle::default(),
+        RenderStyle::default(),
         "/path/to/image.png".to_string(),
     );
     let tree = RenderObjectTree::new(node);

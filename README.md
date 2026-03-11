@@ -5,21 +5,44 @@ Xiaoxigua Flash Widget (xfw) is an ultra-lightweight Wayland bar/widget runtime 
 ## Highlights
 - Declarative Lua DSL for describing views, layout metadata, and event bindings.
 - Rust runtime with `taffy` flex/grid layout, `tiny-skia` + `cosmic-text` CPU rendering, and smithay layer-shell integration.
+- Single RenderObject tree (Flutter-style) with both layout style and render style.
 - Observable state graph that invalidates only dirty rectangles; zero redraws when nothing changes.
 - Hot-reload Lua modules without restarting the compositor session.
 
+## Architecture
+
+### RenderObject Tree (Single Tree)
+```
+RenderObjectTree
+├── RenderObject::Container { layout_style, render_style, rect, children }
+├── RenderObject::Text { layout_style, render_style, rect, content }
+└── RenderObject::Image { layout_style, render_style, rect, path }
+```
+
+### Style Separation
+- **layout_style**: taffy::Style (flex_direction, justify_content, gap, padding, margin, etc.)
+- **render_style**: RenderStyle (color, font_size, background_color, border_color, border_radius, opacity)
+
+### Render Pipeline
+```
+Lua config → RenderObjectConverter → RenderObjectTree (with layout_style + render_style)
+    → LayoutEngine.compute_layout() → rect computed
+    → Renderer.render() → DrawCommand list → tiny-skia
+```
+
 ## Repository Layout
 ```
-docs/                # Architecture notes, roadmap, interface specs
-lua/                 # Lua DSL, widgets, IPC helpers
+docs/ # Architecture notes, roadmap, interface specs
+lua/ # Lua DSL, widgets, IPC helpers
 crates/
-  xfw/              # Binary entrypoint, CLI + logging bootstrap
-  xfw-cli/          # CLI parsing + Lua config entrypoint selection
-  xfw-layout/       # taffy-powered layout graph
-  xfw-platform/     # Wayland + event loop glue (future smithay integration)
-  xfw-render/       # tiny-skia + cosmic-text renderer
-  xfw-runtime/      # Scheduler, Lua bridge, dirty rect orchestration
-Cargo.toml          # Workspace manifest
+  xfw/ # Binary entrypoint, CLI + logging bootstrap
+  xfw-cli/ # CLI parsing + Lua config entrypoint selection
+  xfw-model/ # Core data structures (UiNode, StyleSource, StateField)
+  xfw-layout/ # taffy-powered layout graph, RenderObjectTree, converter
+  xfw-platform/ # Wayland + event loop glue (future smithay integration)
+  xfw-render/ # tiny-skia + cosmic-text renderer, DrawCommand
+  xfw-runtime/ # Scheduler, Lua bridge, dirty rect orchestration
+Cargo.toml # Workspace manifest
 README.md
 ```
 
@@ -30,6 +53,11 @@ cargo build --workspace
 
 # run with a sample widget set (Lua defines layout + styles + events)
 cargo run -p xfw -- --config lua/widgets/status_bar.lua
+```
+
+## Testing
+```bash
+cargo test --workspace  # 27 tests across all crates
 ```
 
 ## Configuration Model

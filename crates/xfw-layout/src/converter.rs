@@ -1,11 +1,13 @@
 use taffy::prelude::*;
 use xfw_model::{ContentSource, NodeKind, StyleSource, StyleValue, UiNode};
 
-use super::render_object_tree::RenderObject;
+use super::render_object_tree::{Color, RenderObject, RenderStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StyleAttr {
     FlexDirection,
+    FlexWrap,
+    FlexGrow,
     AlignItems,
     JustifyContent,
     Width,
@@ -14,7 +16,7 @@ pub enum StyleAttr {
     MinHeight,
     MaxWidth,
     MaxHeight,
-    Flex,
+    Gap,
     Unknown,
 }
 
@@ -22,6 +24,8 @@ impl StyleAttr {
     pub fn from_str(s: &str) -> Self {
         match s {
             "flex_direction" => StyleAttr::FlexDirection,
+            "flex_wrap" => StyleAttr::FlexWrap,
+            "flex_grow" => StyleAttr::FlexGrow,
             "align_items" => StyleAttr::AlignItems,
             "justify_content" => StyleAttr::JustifyContent,
             "width" => StyleAttr::Width,
@@ -30,7 +34,8 @@ impl StyleAttr {
             "min_height" => StyleAttr::MinHeight,
             "max_width" => StyleAttr::MaxWidth,
             "max_height" => StyleAttr::MaxHeight,
-            "flex" => StyleAttr::Flex,
+            "gap" => StyleAttr::Gap,
+            "flex" => StyleAttr::FlexGrow,
             _ => StyleAttr::Unknown,
         }
     }
@@ -44,7 +49,8 @@ impl RenderObjectConverter {
     }
 
     pub fn convert(&self, ui_node: &UiNode) -> RenderObject {
-        let style = self.convert_style(&ui_node.props.style);
+        let layout_style = self.convert_layout_style(&ui_node.props.style);
+        let render_style = self.convert_render_style(&ui_node.props.style);
         let id = ui_node.id.clone();
         let children: Vec<RenderObject> = ui_node
             .children
@@ -57,7 +63,7 @@ impl RenderObjectConverter {
             | NodeKind::Window
             | NodeKind::Row
             | NodeKind::Column
-            | NodeKind::Button => RenderObject::container(id, style, children),
+            | NodeKind::Button => RenderObject::container(id, layout_style, render_style, children),
             NodeKind::Text => {
                 let content = ui_node
                     .props
@@ -69,7 +75,7 @@ impl RenderObjectConverter {
                     })
                     .map(String::from)
                     .unwrap_or_default();
-                RenderObject::text(id, style, content)
+                RenderObject::text(id, layout_style, render_style, content)
             }
             NodeKind::Image => {
                 let path = ui_node
@@ -82,13 +88,55 @@ impl RenderObjectConverter {
                     })
                     .map(String::from)
                     .unwrap_or_default();
-                RenderObject::image(id, style, path)
+                RenderObject::image(id, layout_style, render_style, path)
             }
-            NodeKind::Custom(_) => RenderObject::container(id, style, children),
+            NodeKind::Custom(_) => {
+                RenderObject::container(id, layout_style, render_style, children)
+            }
         }
     }
 
-    fn convert_style(&self, style_source: &StyleSource) -> Style {
+    fn convert_render_style(&self, style_source: &StyleSource) -> RenderStyle {
+        let mut style = RenderStyle::default();
+        if let StyleSource::Static(entries) = style_source {
+            for attr in entries {
+                match attr.name.as_str() {
+                    "color" => {
+                        style.color =
+                            Self::parse_string(&attr.value).and_then(|s| Color::from_hex(&s));
+                    }
+                    "font_size" | "font-size" => {
+                        style.font_size = Self::parse_single_number(&attr.value);
+                    }
+                    "bg_color" | "background" | "background_color" => {
+                        style.background_color =
+                            Self::parse_string(&attr.value).and_then(|s| Color::from_hex(&s));
+                    }
+                    "border_color" | "border-color" => {
+                        style.border_color =
+                            Self::parse_string(&attr.value).and_then(|s| Color::from_hex(&s));
+                    }
+                    "border_radius" | "border-radius" => {
+                        style.border_radius = Self::parse_single_number(&attr.value);
+                    }
+                    "opacity" => {
+                        style.opacity = Self::parse_single_number(&attr.value);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        style
+    }
+
+    fn parse_string(value: &StyleValue) -> Option<String> {
+        match value {
+            StyleValue::String(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    fn convert_layout_style(&self, style_source: &StyleSource) -> Style {
         let mut style = Style::default();
 
         if let StyleSource::Static(entries) = style_source {
@@ -96,6 +144,12 @@ impl RenderObjectConverter {
                 match StyleAttr::from_str(&attr.name) {
                     StyleAttr::FlexDirection => {
                         style.flex_direction = Self::parse_flex_direction(&attr.value);
+                    }
+                    StyleAttr::FlexWrap => {
+                        style.flex_wrap = Self::parse_flex_wrap(&attr.value);
+                    }
+                    StyleAttr::FlexGrow => {
+                        style.flex_grow = Self::parse_single_number(&attr.value).unwrap_or(0.0);
                     }
                     StyleAttr::AlignItems => {
                         style.align_items = Self::parse_align_items(&attr.value);
@@ -121,8 +175,12 @@ impl RenderObjectConverter {
                     StyleAttr::MaxHeight => {
                         style.max_size.height = Self::parse_dimension(&attr.value);
                     }
-                    StyleAttr::Flex => {
-                        style.flex_grow = Self::parse_single_number(&attr.value).unwrap_or(0.0);
+                    StyleAttr::Gap => {
+                        let n = Self::parse_single_number(&attr.value).unwrap_or(0.0);
+                        style.gap = Size {
+                            width: LengthPercentage::length(n),
+                            height: LengthPercentage::length(n),
+                        };
                     }
                     StyleAttr::Unknown => {}
                 }
@@ -171,6 +229,94 @@ impl RenderObjectConverter {
                 _ => Some(JustifyContent::FlexStart),
             },
             _ => None,
+        }
+    }
+
+    fn parse_flex_wrap(value: &StyleValue) -> FlexWrap {
+        match value {
+            StyleValue::String(s) => match s.as_str() {
+                "wrap" => FlexWrap::Wrap,
+                "nowrap" => FlexWrap::NoWrap,
+                "wrap-reverse" => FlexWrap::WrapReverse,
+                _ => FlexWrap::NoWrap,
+            },
+            _ => FlexWrap::NoWrap,
+        }
+    }
+
+    fn parse_align_content(value: &StyleValue) -> Option<AlignContent> {
+        match value {
+            StyleValue::String(s) => match s.as_str() {
+                "start" | "flex-start" => Some(AlignContent::FlexStart),
+                "center" => Some(AlignContent::Center),
+                "end" | "flex-end" => Some(AlignContent::FlexEnd),
+                "space-between" => Some(AlignContent::SpaceBetween),
+                "space-around" => Some(AlignContent::SpaceAround),
+                "stretch" => Some(AlignContent::Stretch),
+                _ => Some(AlignContent::FlexStart),
+            },
+            _ => None,
+        }
+    }
+
+    fn parse_rect(value: &StyleValue) -> Rect<LengthPercentage> {
+        if let Some(n) = Self::parse_single_number(value) {
+            Rect {
+                left: LengthPercentage::length(n),
+                right: LengthPercentage::length(n),
+                top: LengthPercentage::length(n),
+                bottom: LengthPercentage::length(n),
+            }
+        } else {
+            Rect::zero()
+        }
+    }
+
+    fn parse_rect_auto(value: &StyleValue) -> Rect<LengthPercentageAuto> {
+        if let Some(n) = Self::parse_single_number(value) {
+            Rect {
+                left: LengthPercentageAuto::length(n),
+                right: LengthPercentageAuto::length(n),
+                top: LengthPercentageAuto::length(n),
+                bottom: LengthPercentageAuto::length(n),
+            }
+        } else {
+            Rect::zero()
+        }
+    }
+
+    fn parse_size(value: &StyleValue) -> Size<LengthPercentage> {
+        if let Some(n) = Self::parse_single_number(value) {
+            Size {
+                width: LengthPercentage::length(n),
+                height: LengthPercentage::length(n),
+            }
+        } else {
+            Size::zero()
+        }
+    }
+
+    fn parse_display(value: &StyleValue) -> Display {
+        match value {
+            StyleValue::String(s) => match s.as_str() {
+                "none" => Display::None,
+                "flex" => Display::Flex,
+                "grid" => Display::Grid,
+                "block" => Display::Block,
+                _ => Display::Flex,
+            },
+            _ => Display::Flex,
+        }
+    }
+
+    fn parse_position(value: &StyleValue) -> Position {
+        match value {
+            StyleValue::String(s) => match s.as_str() {
+                "absolute" => Position::Absolute,
+                "relative" => Position::Relative,
+                _ => Position::Relative,
+            },
+            _ => Position::Relative,
         }
     }
 

@@ -30,7 +30,7 @@ impl Runtime {
         let mut lua = lua::LuaEngine::new()?;
         let state_registry = lua.state_registry();
         let layout = LayoutEngine::new();
-        let renderer = Renderer::new();
+        let renderer = Renderer::with_default_size();
         let platform = PlatformSurface::new()?;
 
         let mut runtime = Self {

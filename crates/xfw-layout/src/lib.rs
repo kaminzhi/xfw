@@ -4,7 +4,9 @@ mod render_object_tree;
 use taffy::prelude::*;
 
 pub use converter::RenderObjectConverter;
-pub use render_object_tree::{Anchor, Kind, Layer, Rect, RenderObject, RenderObjectTree};
+pub use render_object_tree::{
+    Anchor, Color, Kind, Layer, Rect, RenderObject, RenderObjectTree, RenderStyle,
+};
 
 pub struct LayoutEngine {
     taffy: taffy::TaffyTree,
@@ -22,7 +24,7 @@ impl LayoutEngine {
     }
 
     fn compute_node(&mut self, node: &mut RenderObject) -> anyhow::Result<()> {
-        let style = node.style().clone();
+        let style = node.layout_style().clone();
         let child_count = node.children().map(|c| c.len()).unwrap_or(0);
 
         let child_ids: Vec<NodeId> = (0..child_count).map(NodeId::from).collect();
