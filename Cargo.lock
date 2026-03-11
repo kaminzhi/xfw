@@ -1547,6 +1547,8 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+ "wayland-backend",
+ "wayland-client",
 ]
 
 [[package]]

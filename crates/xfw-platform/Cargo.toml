@@ -8,6 +8,8 @@ publish = false
 anyhow.workspace = true
 tracing.workspace = true
 smithay-client-toolkit.workspace = true
+wayland-client.workspace = true
+wayland-backend.workspace = true
 mio = { version = "1.0", features = ["os-poll", "net", "os-ext"] }
 parking_lot.workspace = true
 libc = "0.2"

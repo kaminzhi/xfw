@@ -17,6 +17,8 @@ parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 smithay-client-toolkit = "0.20"
+wayland-client = "0.31"
+wayland-backend = "0.3"
 taffy = "0.9"
 thiserror = "2.0"
 tiny-skia = "0.12"
