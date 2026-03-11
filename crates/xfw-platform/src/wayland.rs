@@ -12,6 +12,7 @@ pub struct WaylandConnectionInner {
 
 pub struct WaylandConnection {
     pub display: String,
+    pub socket_name: Option<String>,
     inner: Option<WaylandConnectionInner>,
 }
 
@@ -26,6 +27,7 @@ impl WaylandConnection {
                 tracing::warn!(error = %e, "failed to connect to Wayland, running in headless mode");
                 return Ok(Self {
                     display: wayland_display,
+                    socket_name: None,
                     inner: None,
                 });
             }
@@ -37,6 +39,7 @@ impl WaylandConnection {
 
         Ok(Self {
             display: wayland_display,
+            socket_name: None,
             inner: Some(WaylandConnectionInner { connection, fd }),
         })
     }
