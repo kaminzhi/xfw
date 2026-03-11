@@ -25,3 +25,4 @@ wayland-protocols = { version = "0.31", features = ["client"] }
 tiny-skia = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+strum = { version = "0.28", features = ["derive"] }
