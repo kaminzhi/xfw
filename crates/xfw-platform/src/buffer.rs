@@ -1,19 +1,20 @@
 use std::collections::VecDeque;
-use std::fs::{File, OpenOptions};
-use std::io::{Error as IoError, Map, MmapOptions, Write};
-use std::os::fd::{FromRawFd, IntoRawFd, RawFd};
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::{Error as IoError, Write};
+use std::os::fd::{FromRawFd, RawFd};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use wayland_client::protocol::{wl_buffer, wl_shm, wl_shm_pool};
-use wayland_client::Proxy;
+use memmap2::Mmap;
+use wayland_client::protocol::{wl_buffer, wl_shm, wl_shm_pool::WlShmPool};
+use wayland_client::QueueHandle;
 
+use crate::connection::WaylandDispatcher;
 use crate::error::PlatformError;
 use crate::Result;
-use anyhow::anyhow;
 
 static BUFFER_ID: AtomicU32 = AtomicU32::new(0);
 
+#[derive(Clone)]
 pub struct BufferConfig {
     pub width: u32,
     pub height: u32,
@@ -48,18 +49,18 @@ impl BufferConfig {
 
 pub struct ShmBuffer {
     pub id: u32,
-    pub buffer: Proxy<wl_buffer::WlBuffer>,
+    pub buffer: wl_buffer::WlBuffer,
     pub config: BufferConfig,
     file: File,
-    _mapping: Map,
+    _mapping: Mmap,
     data: Vec<u8>,
     in_use: bool,
 }
 
 impl ShmBuffer {
     pub fn new(
-        shm: &Proxy<wl_shm::WlShm>,
-        qh: &mut wayland_client::QueueHandle,
+        shm: &wl_shm::WlShm,
+        qh: &mut QueueHandle<WaylandDispatcher>,
         config: BufferConfig,
     ) -> Result<Self> {
         let size = config.size();
@@ -67,32 +68,27 @@ impl ShmBuffer {
 
         let mut file = unsafe { File::from_raw_fd(fd) };
 
-        file.write_all(&vec![0u8; size])
-            .map_err(|e| PlatformError::Buffer(format!("Failed to initialize SHM: {}", e)))?;
+        file.write_all(&vec![0u8; size]).unwrap();
 
-        let pool = shm
-            .create_pool(fd, size as i32, qh)
-            .map_err(|e| PlatformError::Buffer(format!("Failed to create pool: {}", e)))?;
+        let borrowed_fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
+        let pool: WlShmPool = shm.create_pool(borrowed_fd, size as i32, qh, ());
 
-        let buffer = pool
-            .create_buffer(
-                0,
-                config.width as i32,
-                config.height as i32,
-                config.stride,
-                config.format,
-                qh,
-            )
-            .map_err(|e| PlatformError::Buffer(format!("Failed to create buffer: {}", e)))?;
+        let format = wl_shm::Format::Xrgb8888;
+        let buffer: wl_buffer::WlBuffer = pool.create_buffer(
+            0,
+            config.width as i32,
+            config.height as i32,
+            config.stride as i32,
+            format,
+            qh,
+            (),
+        );
 
         let mapping = unsafe {
-            MmapOptions::new()
-                .len(size)
-                .map(&file)
-                .map_err(|e| PlatformError::Buffer(format!("Failed to mmap: {}", e)))?
+            Mmap::map(&file).map_err(|e| PlatformError::Buffer(format!("Failed to mmap: {}", e)))?
         };
 
-        let data = unsafe { std::slice::from_raw_parts_mut(mapping.as_mut_ptr(), size).to_vec() };
+        let data = vec![0u8; size];
 
         let id = BUFFER_ID.fetch_add(1, Ordering::SeqCst);
 
@@ -134,6 +130,7 @@ impl ShmBuffer {
 
         #[cfg(not(target_os = "linux"))]
         {
+            use std::fs::OpenOptions;
             let temp_dir = std::env::temp_dir();
             let path = temp_dir.join(format!("xfw-shm-{}", std::process::id()));
             let file = OpenOptions::new()
@@ -185,11 +182,11 @@ impl Drop for ShmBuffer {
 pub struct BufferPool {
     pool: VecDeque<ShmBuffer>,
     config: BufferConfig,
-    shm: Proxy<wl_shm::WlShm>,
+    shm: wl_shm::WlShm,
 }
 
 impl BufferPool {
-    pub fn new(shm: Proxy<wl_shm::WlShm>, config: BufferConfig) -> Self {
+    pub fn new(shm: wl_shm::WlShm, config: BufferConfig) -> Self {
         Self {
             pool: VecDeque::new(),
             config,
@@ -197,19 +194,21 @@ impl BufferPool {
         }
     }
 
-    pub fn acquire(&mut self, qh: &mut wayland_client::QueueHandle) -> Result<&mut ShmBuffer> {
-        if let Some(buffer) = self.pool.iter_mut().find(|b| !b.is_in_use()) {
-            buffer.set_in_use(true);
-            return Ok(buffer);
+    pub fn acquire(&mut self, qh: &mut QueueHandle<WaylandDispatcher>) -> Result<&mut ShmBuffer> {
+        let found = self.pool.iter_mut().find(|b| !b.is_in_use()).map(|b| {
+            b.set_in_use(true);
+            b.id
+        });
+
+        if let Some(id) = found {
+            let idx = self.pool.iter().position(|b| b.id == id).unwrap();
+            return Ok(&mut self.pool[idx]);
         }
 
-        let mut buffer = ShmBuffer::new(&self.shm, qh, self.config.clone())?;
-        buffer.set_in_use(true);
+        let buffer = ShmBuffer::new(&self.shm, qh, self.config.clone())?;
         self.pool.push_back(buffer);
-
-        self.pool
-            .back_mut()
-            .ok_or_else(|| anyhow!("Failed to acquire buffer"))
+        let buffer = self.pool.back_mut().unwrap();
+        Ok(buffer)
     }
 
     pub fn release(&mut self, buffer_id: u32) {
@@ -222,7 +221,7 @@ impl BufferPool {
         &mut self,
         width: u32,
         height: u32,
-        qh: &mut wayland_client::QueueHandle,
+        qh: &mut QueueHandle<WaylandDispatcher>,
     ) -> Result<()> {
         self.config = BufferConfig::new(width, height);
         self.pool.clear();
