@@ -1604,16 +1604,18 @@ dependencies = [
  "anyhow",
  "inotify",
  "libc",
+ "memmap2",
  "mio",
- "once_cell",
  "parking_lot",
+ "serde",
+ "serde_json",
  "smithay-client-toolkit",
  "tempfile",
  "thiserror",
  "tracing",
- "wayland-backend",
  "wayland-client",
  "wayland-protocols 0.31.2",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]

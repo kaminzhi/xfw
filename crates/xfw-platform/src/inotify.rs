@@ -1,9 +1,9 @@
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 
 use inotify::{EventMask, Inotify, WatchMask};
 
-use crate::error::PlatformResult;
+use crate::error::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileEvent {
@@ -20,9 +20,8 @@ pub struct FileWatcher {
 }
 
 impl FileWatcher {
-    pub fn new() -> PlatformResult<Self> {
-        let inotify =
-            Inotify::init().map_err(|e| crate::error::PlatformError::FdError(e.to_string()))?;
+    pub fn new() -> Result<Self> {
+        let inotify = Inotify::init().map_err(|e| crate::error::buffer_error(e.to_string()))?;
         let fd = inotify.as_raw_fd();
 
         tracing::info!(fd = fd, "inotify initialized");
@@ -30,7 +29,7 @@ impl FileWatcher {
         Ok(Self { inotify, fd })
     }
 
-    pub fn watch_file<P: AsRef<Path>>(&mut self, path: P) -> PlatformResult<()> {
+    pub fn watch_file<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let path = path.as_ref();
 
         self.inotify
@@ -40,18 +39,14 @@ impl FileWatcher {
                 WatchMask::MODIFY | WatchMask::CREATE | WatchMask::DELETE | WatchMask::ACCESS,
             )
             .map_err(|e| {
-                crate::error::PlatformError::FdError(format!(
-                    "failed to watch {}: {}",
-                    path.display(),
-                    e
-                ))
+                crate::error::buffer_error(format!("failed to watch {}: {}", path.display(), e))
             })?;
 
         tracing::debug!(path = %path.display(), "watching file");
         Ok(())
     }
 
-    pub fn watch_directory<P: AsRef<Path>>(&mut self, path: P) -> PlatformResult<()> {
+    pub fn watch_directory<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
         let path = path.as_ref();
 
         self.inotify
@@ -61,18 +56,14 @@ impl FileWatcher {
                 WatchMask::MODIFY | WatchMask::CREATE | WatchMask::DELETE,
             )
             .map_err(|e| {
-                crate::error::PlatformError::FdError(format!(
-                    "failed to watch dir {}: {}",
-                    path.display(),
-                    e
-                ))
+                crate::error::buffer_error(format!("failed to watch dir {}: {}", path.display(), e))
             })?;
 
         tracing::debug!(path = %path.display(), "watching directory");
         Ok(())
     }
 
-    pub fn read_events(&mut self) -> PlatformResult<Vec<(String, FileEvent)>> {
+    pub fn read_events(&mut self) -> Result<Vec<(String, FileEvent)>> {
         let mut events = Vec::new();
         let mut buffer = [0u8; 1024];
 

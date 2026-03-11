@@ -1,146 +1,224 @@
 use std::collections::HashMap;
-use std::os::fd::IntoRawFd;
-use std::sync::Arc;
-use std::time::Duration;
+use std::os::fd::RawFd;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use mio::event::Event;
 use mio::unix::SourceFd;
-use mio::{Events, Interest, Poll, Registry, Token};
+use mio::{Events, Interest, Poll, Token};
 
-use crate::error::{PlatformError, PlatformResult};
-use crate::event::{FdWatcher, PlatformEvent, PlatformEventHandler};
+use crate::error::event_loop_error;
+use crate::Result;
+
+pub trait EventSource: Send + Sync {
+    fn fd(&self) -> RawFd;
+    fn ready(&self, event: &Event, dispatcher: &mut dyn EventDispatcher);
+}
+
+pub trait EventDispatcher: Send {
+    fn dispatch(&mut self, source: &dyn EventSource, event: &Event);
+}
 
 pub struct EventLoop {
     poll: Poll,
-    registry: Registry,
-    events: Events,
-    watchers: HashMap<Token, FdWatcher>,
-    next_ipc_token: usize,
-    wayland_fd: Option<i32>,
+    sources: HashMap<Token, Box<dyn EventSource>>,
+    dispatchers: HashMap<Token, Box<dyn EventDispatcher>>,
+    token_counter: usize,
     running: bool,
+    wake_sender: Sender<()>,
+    wake_receiver: Mutex<Receiver<()>>,
 }
 
 impl EventLoop {
-    pub fn new() -> PlatformResult<Self> {
-        let poll = Poll::new().map_err(|e| PlatformError::EventLoop(e.to_string()))?;
-        let registry = poll
-            .registry()
-            .try_clone()
-            .map_err(|e| PlatformError::EventLoop(e.to_string()))?;
+    pub fn new() -> Result<Self> {
+        let poll =
+            Poll::new().map_err(|e| event_loop_error(format!("Failed to create poll: {}", e)))?;
+
+        let (wake_sender, wake_receiver) = channel();
+
         Ok(Self {
             poll,
-            registry,
-            events: Events::with_capacity(1024),
-            watchers: HashMap::new(),
-            next_ipc_token: 1,
-            wayland_fd: None,
+            sources: HashMap::new(),
+            dispatchers: HashMap::new(),
+            token_counter: 0,
             running: false,
+            wake_sender,
+            wake_receiver: Mutex::new(wake_receiver),
         })
     }
 
-    pub fn register_wayland_fd(&mut self, fd: i32) -> PlatformResult<()> {
-        self.wayland_fd = Some(fd);
-        let mut source = SourceFd(&fd);
-        self.registry
+    pub fn register<S>(&mut self, source: S, dispatcher: impl EventDispatcher + 'static) -> Token
+    where
+        S: EventSource + 'static,
+    {
+        let token = Token(self.token_counter);
+        self.token_counter += 1;
+
+        let fd = source.fd();
+        let mut source_fd = SourceFd(&fd);
+
+        self.poll
+            .registry()
             .register(
-                &mut source,
-                Token(0),
+                &mut source_fd,
+                token,
                 Interest::READABLE | Interest::WRITABLE,
             )
-            .map_err(|e: std::io::Error| PlatformError::EventLoop(e.to_string()))?;
-        tracing::debug!(fd = fd, "registered wayland fd");
-        Ok(())
+            .expect("Failed to register event source");
+
+        self.sources.insert(token, Box::new(source));
+        self.dispatchers.insert(token, Box::new(dispatcher));
+
+        token
     }
 
-    pub fn register_fd<F>(&mut self, fd: F, interest: Interest) -> PlatformResult<Token>
-    where
-        F: IntoRawFd,
-    {
-        let fd = fd.into_raw_fd();
-        let token = Token(self.next_ipc_token);
-        self.next_ipc_token += 1;
+    pub fn register_fd(&mut self, fd: RawFd, dispatcher: impl EventDispatcher + 'static) -> Token {
+        let token = Token(self.token_counter);
+        self.token_counter += 1;
 
-        let mut source = SourceFd(&fd);
-        self.registry
-            .register(&mut source, token, interest)
-            .map_err(|e: std::io::Error| PlatformError::EventLoop(e.to_string()))?;
+        let mut source_fd = SourceFd(&fd);
 
-        let watcher = FdWatcher::new(fd, token, interest);
-        self.watchers.insert(token, watcher);
-
-        tracing::debug!(fd = fd, token = ?token, "registered fd for IPC");
-        Ok(token)
-    }
-
-    pub fn unregister_fd(&mut self, token: Token) -> PlatformResult<()> {
-        if let Some(watcher) = self.watchers.remove(&token) {
-            let mut source = SourceFd(&watcher.fd());
-            self.registry
-                .deregister(&mut source)
-                .map_err(|e: std::io::Error| PlatformError::EventLoop(e.to_string()))?;
-            tracing::debug!(token = ?token, "unregistered fd");
-        }
-        Ok(())
-    }
-
-    pub fn poll_events<F>(&mut self, timeout: Option<Duration>, handler: &F) -> PlatformResult<()>
-    where
-        F: PlatformEventHandler,
-    {
         self.poll
-            .poll(&mut self.events, timeout)
-            .map_err(|e| PlatformError::EventLoop(e.to_string()))?;
+            .registry()
+            .register(
+                &mut source_fd,
+                token,
+                Interest::READABLE | Interest::WRITABLE,
+            )
+            .expect("Failed to register fd");
 
-        for event in &self.events {
-            let platform_event = self.map_event(event);
-            let should_continue = handler.handle_event(platform_event);
-            if !should_continue {
-                return Ok(());
-            }
-        }
-        Ok(())
+        let fd_source = FdEventSource { fd };
+        self.sources.insert(token, Box::new(fd_source));
+        self.dispatchers.insert(token, Box::new(dispatcher));
+
+        token
     }
 
-    fn map_event(&self, event: &Event) -> PlatformEvent {
-        if event.token() == Token(0) {
-            return PlatformEvent::Wayland;
-        }
-
-        if let Some(watcher) = self.watchers.get(&event.token()) {
-            if event.is_readable() {
-                return PlatformEvent::Ipc(watcher.fd() as usize);
-            }
-        }
-
-        PlatformEvent::Tick
+    pub fn unregister(&mut self, token: Token) {
+        if let Some(_source) = self.sources.remove(&token) {}
+        self.dispatchers.remove(&token);
     }
 
-    pub fn run<H>(&mut self, handler: Arc<H>) -> PlatformResult<()>
+    pub fn wake(&self) {
+        let _ = self.wake_sender.send(());
+    }
+
+    pub fn run<D>(&mut self, dispatcher: &mut D, timeout: Option<Duration>) -> Result<()>
     where
-        H: PlatformEventHandler,
+        D: EventDispatcher,
     {
         self.running = true;
-        tracing::info!("starting event loop");
+        let mut events = Events::with_capacity(1024);
 
         while self.running {
-            self.poll_events(Some(Duration::from_secs(3600)), &*handler)?;
+            let wake_timeout = Duration::from_millis(100);
+
+            let loop_timeout = timeout.unwrap_or(wake_timeout);
+
+            self.poll
+                .poll(&mut events, Some(loop_timeout))
+                .map_err(|e| event_loop_error(format!("Poll failed: {}", e)))?;
+
+            if events.is_empty() {
+                continue;
+            }
+
+            for event in events.iter() {
+                let token = event.token();
+
+                if token == Token(0) && (event.is_read_closed() || event.is_write_closed()) {
+                    self.running = false;
+                    break;
+                }
+
+                if let Some(source) = self.sources.get(&token) {
+                    if let Some(d) = self.dispatchers.get_mut(&token) {
+                        d.dispatch(source.as_ref(), &event);
+                    }
+                }
+            }
+
+            if let Ok(receiver) = self.wake_receiver.lock() {
+                while receiver.try_recv().is_ok() {
+                    tracing::debug!("wake event received");
+                }
+            }
         }
 
-        tracing::info!("event loop stopped");
         Ok(())
     }
 
     pub fn stop(&mut self) {
         self.running = false;
     }
+}
 
-    pub fn is_running(&self) -> bool {
-        self.running
+struct FdEventSource {
+    fd: RawFd,
+}
+
+impl EventSource for FdEventSource {
+    fn fd(&self) -> RawFd {
+        self.fd
+    }
+
+    fn ready(&self, event: &Event, dispatcher: &mut dyn EventDispatcher) {
+        dispatcher.dispatch(self, event);
+    }
+}
+
+struct WakeEventSource;
+
+impl EventSource for WakeEventSource {
+    fn fd(&self) -> RawFd {
+        std::hint::black_box(-1isize as RawFd)
+    }
+
+    fn ready(&self, event: &Event, dispatcher: &mut dyn EventDispatcher) {
+        dispatcher.dispatch(self, event);
     }
 }
 
 impl Default for EventLoop {
     fn default() -> Self {
         Self::new().expect("Failed to create event loop")
+    }
+}
+
+pub struct Timer {
+    deadline: Instant,
+    duration: Duration,
+    repeat: bool,
+}
+
+impl Timer {
+    pub fn new(duration: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + duration,
+            duration,
+            repeat: false,
+        }
+    }
+
+    pub fn repeating(duration: Duration) -> Self {
+        Self {
+            deadline: Instant::now() + duration,
+            duration,
+            repeat: true,
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        Instant::now() >= self.deadline
+    }
+
+    pub fn reset(&mut self) {
+        if self.repeat {
+            self.deadline = Instant::now() + self.duration;
+        } else {
+            self.deadline = Instant::now() + Duration::from_secs(365 * 24 * 60 * 60);
+            // 1 year
+        }
     }
 }

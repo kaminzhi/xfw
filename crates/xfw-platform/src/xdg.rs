@@ -1,10 +1,13 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use wayland_client::protocol::wl_surface;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel};
 
-use crate::error::PlatformResult;
-use crate::wayland::WaylandConnection;
+use crate::connection::WaylandConnection;
+use crate::error::{protocol_not_supported, Result};
+
+static XDG_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowState {
@@ -56,6 +59,15 @@ impl From<WindowResizeEdge> for xdg_toplevel::ResizeEdge {
             WindowResizeEdge::BottomRight => xdg_toplevel::ResizeEdge::BottomRight,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowAnchor {
+    Top,
+    Bottom,
+    Left,
+    Right,
+    Center,
 }
 
 #[derive(Clone)]
@@ -125,6 +137,16 @@ impl XdgWindowConfig {
         self
     }
 
+    pub fn with_decorations(mut self, decorations: bool) -> Self {
+        self.decorations = decorations;
+        self
+    }
+
+    pub fn with_resizable(mut self, resizable: bool) -> Self {
+        self.resizable = resizable;
+        self
+    }
+
     pub fn fullscreen(mut self, fullscreen: bool) -> Self {
         self.fullscreen = fullscreen;
         self
@@ -141,21 +163,76 @@ pub struct XdgWindow {
     pub surface: wl_surface::WlSurface,
     pub xdg_surface: xdg_surface::XdgSurface,
     pub toplevel: xdg_toplevel::XdgToplevel,
-    #[allow(dead_code)]
     config: XdgWindowConfig,
     committed: bool,
     width: u32,
     height: u32,
-    #[allow(dead_code)]
     states: Vec<WindowState>,
 }
 
 impl XdgWindow {
-    pub fn new(_connection: &WaylandConnection, _config: XdgWindowConfig) -> PlatformResult<Self> {
-        todo!("XDG window creation requires deeper WaylandConnection integration");
+    pub fn new(connection: &WaylandConnection, config: XdgWindowConfig) -> Result<Self> {
+        let config_clone = config.clone();
+        let state = connection.state();
+        let wm_base = state
+            .lock()
+            .xdg_wm_base
+            .clone()
+            .ok_or_else(|| protocol_not_supported("xdg_wm_base"))?;
+
+        let surface = connection.get_surface()?;
+        let mut qh = connection.queue();
+
+        let xdg_surface = wm_base.get_xdg_surface(&surface, &mut qh, ());
+
+        let toplevel = xdg_surface.get_toplevel(&mut qh, ());
+
+        toplevel.set_title(config_clone.title.clone());
+
+        if let Some(app_id) = &config_clone.app_id {
+            toplevel.set_app_id(app_id.clone());
+        }
+
+        if config_clone.min_width > 0 || config_clone.min_height > 0 {
+            toplevel.set_min_size(
+                config_clone.min_width as i32,
+                config_clone.min_height as i32,
+            );
+        }
+
+        if config_clone.max_width > 0 || config_clone.max_height > 0 {
+            toplevel.set_max_size(
+                config_clone.max_width as i32,
+                config_clone.max_height as i32,
+            );
+        }
+
+        // toplevel.set_resizable(config.resizable);
+
+        // if config.decorations {
+        //     toplevel.set_decorations(1);
+        // } else {
+        //     toplevel.set_decorations(0);
+        // }
+
+        let id = XDG_WINDOW_ID.fetch_add(1, Ordering::SeqCst);
+        let width = config_clone.width;
+        let height = config_clone.height;
+
+        Ok(Self {
+            id,
+            surface,
+            xdg_surface,
+            toplevel,
+            config: config_clone,
+            committed: false,
+            width,
+            height,
+            states: Vec::new(),
+        })
     }
 
-    pub fn set_size(&mut self, width: u32, height: u32) -> PlatformResult<()> {
+    pub fn set_size(&mut self, width: u32, height: u32) -> Result<()> {
         self.width = width;
         self.height = height;
         self.surface.set_buffer_scale(1);
@@ -163,7 +240,17 @@ impl XdgWindow {
         Ok(())
     }
 
-    pub fn set_fullscreen(&mut self, fullscreen: bool) -> PlatformResult<()> {
+    pub fn set_title(&mut self, title: &str) -> Result<()> {
+        self.toplevel.set_title(title.to_string());
+        Ok(())
+    }
+
+    pub fn set_app_id(&mut self, app_id: &str) -> Result<()> {
+        self.toplevel.set_app_id(app_id.to_string());
+        Ok(())
+    }
+
+    pub fn set_fullscreen(&mut self, fullscreen: bool) -> Result<()> {
         if fullscreen {
             self.toplevel.set_fullscreen(None);
         } else {
@@ -172,7 +259,7 @@ impl XdgWindow {
         Ok(())
     }
 
-    pub fn set_maximized(&mut self, maximized: bool) -> PlatformResult<()> {
+    pub fn set_maximized(&mut self, maximized: bool) -> Result<()> {
         if maximized {
             self.toplevel.set_maximized();
         } else {
@@ -181,7 +268,20 @@ impl XdgWindow {
         Ok(())
     }
 
-    pub fn commit(&mut self) -> PlatformResult<()> {
+    pub fn set_minimized(&mut self) -> Result<()> {
+        self.toplevel.set_minimized();
+        Ok(())
+    }
+
+    pub fn start_resize(&mut self, _edge: WindowResizeEdge) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn move_(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn commit(&mut self) -> Result<()> {
         self.surface.commit();
         self.committed = true;
         Ok(())
@@ -193,6 +293,20 @@ impl XdgWindow {
 
     pub fn get_id(&self) -> u32 {
         self.id
+    }
+
+    pub fn add_state(&mut self, state: WindowState) {
+        if !self.states.contains(&state) {
+            self.states.push(state);
+        }
+    }
+
+    pub fn remove_state(&mut self, state: WindowState) {
+        self.states.retain(|s| *s != state);
+    }
+
+    pub fn get_states(&self) -> &[WindowState] {
+        &self.states
     }
 }
 
@@ -213,7 +327,7 @@ impl XdgWindowManager {
         &mut self,
         connection: &WaylandConnection,
         config: XdgWindowConfig,
-    ) -> PlatformResult<u32> {
+    ) -> Result<u32> {
         let window = XdgWindow::new(connection, config)?;
         let id = window.get_id();
         self.windows.insert(id, window);
@@ -245,6 +359,10 @@ impl XdgWindowManager {
 
     pub fn windows(&self) -> impl Iterator<Item = &XdgWindow> {
         self.windows.values()
+    }
+
+    pub fn windows_mut(&mut self) -> impl Iterator<Item = &mut XdgWindow> {
+        self.windows.values_mut()
     }
 }
 
