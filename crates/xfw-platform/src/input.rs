@@ -1,11 +1,9 @@
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 
-use wayland_client::protocol::wl_seat;
-use wayland_client::{protocol::wl_pointer, Dispatch, Proxy, QueueHandle};
+use wayland_client::protocol::{wl_pointer, wl_seat};
 
 use crate::error::PlatformError;
-use crate::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerButton {
@@ -20,11 +18,11 @@ pub enum PointerButton {
 impl From<u32> for PointerButton {
     fn from(button: u32) -> Self {
         match button {
-            wl_pointer::Button::ButtonLeft => PointerButton::Left,
-            wl_pointer::Button::ButtonRight => PointerButton::Right,
-            wl_pointer::Button::ButtonMiddle => PointerButton::Middle,
-            wl_pointer::Button::ButtonWheelUp => PointerButton::WheelUp,
-            wl_pointer::Button::ButtonWheelDown => PointerButton::WheelDown,
+            0x110 => PointerButton::Left,
+            0x111 => PointerButton::Right,
+            0x112 => PointerButton::Middle,
+            0x113 => PointerButton::WheelUp,
+            0x114 => PointerButton::WheelDown,
             other => PointerButton::Other(other),
         }
     }
@@ -73,8 +71,8 @@ pub struct InputState {
     pub pointer_y: f64,
     pub focused_surface: Option<u32>,
     pub hovered_surface: Option<u32>,
-    pub seat: Option<Proxy<wl_seat::WlSeat>>,
-    pub pointer: Option<Proxy<wl_pointer::WlPointer>>,
+    pub seat: Option<wl_seat::WlSeat>,
+    pub pointer: Option<wl_pointer::WlPointer>,
 }
 
 impl InputState {
