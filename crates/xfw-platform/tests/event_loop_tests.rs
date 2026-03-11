@@ -122,3 +122,19 @@ fn test_fd_watcher() {
     assert_eq!(watcher.token(), Token(1));
     assert_eq!(watcher.interest(), Interest::READABLE);
 }
+
+#[test]
+fn test_event_loop_stop() {
+    let mut event_loop = EventLoop::new().unwrap();
+    assert!(!event_loop.is_running());
+    event_loop.stop();
+    assert!(!event_loop.is_running());
+}
+
+#[test]
+fn test_event_loop_is_running() {
+    let mut event_loop = EventLoop::new().unwrap();
+    assert!(!event_loop.is_running());
+    event_loop.stop();
+    assert!(!event_loop.is_running());
+}

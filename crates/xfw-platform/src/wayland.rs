@@ -13,7 +13,7 @@ pub struct WaylandConnectionInner {
 pub struct WaylandConnection {
     pub display: String,
     pub socket_name: Option<String>,
-    inner: Option<WaylandConnectionInner>,
+    conn: Option<WaylandConnectionInner>,
 }
 
 impl WaylandConnection {
@@ -28,7 +28,7 @@ impl WaylandConnection {
                 return Ok(Self {
                     display: wayland_display,
                     socket_name: None,
-                    inner: None,
+                    conn: None,
                 });
             }
         };
@@ -40,20 +40,20 @@ impl WaylandConnection {
         Ok(Self {
             display: wayland_display,
             socket_name: None,
-            inner: Some(WaylandConnectionInner { connection, fd }),
+            conn: Some(WaylandConnectionInner { connection, fd }),
         })
     }
 
     pub fn is_connected(&self) -> bool {
-        self.inner.is_some()
+        self.conn.is_some()
     }
 
     pub fn is_headless(&self) -> bool {
-        self.inner.is_none()
+        self.conn.is_none()
     }
 
     pub fn get_fd(&self) -> Option<i32> {
-        self.inner.as_ref().map(|i| i.fd)
+        self.conn.as_ref().map(|i| i.fd)
     }
 }
 
