@@ -3,7 +3,6 @@ use std::os::fd::{AsFd, AsRawFd, RawFd};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use tracing;
 use wayland_client::globals::{registry_queue_init, Global, GlobalList, GlobalListContents};
 use wayland_client::protocol::{
     wl_buffer, wl_compositor, wl_display, wl_registry, wl_shm, wl_shm_pool, wl_subcompositor,
@@ -31,10 +30,11 @@ pub struct WaylandState {
 }
 
 pub struct WaylandConnection {
-    connection: Connection,
-    event_queue: EventQueue<WaylandDispatcher>,
-    globals: GlobalList,
+    pub(super) connection: Connection,
+    pub(super) event_queue: EventQueue<WaylandDispatcher>,
+    pub(super) globals: GlobalList,
     state: Arc<Mutex<WaylandState>>,
+    pub(super) dispatcher: WaylandDispatcher,
     pub(super) fd: RawFd,
 }
 
@@ -75,6 +75,7 @@ impl WaylandConnection {
             event_queue,
             globals,
             state,
+            dispatcher: WaylandDispatcher,
             fd,
         };
 
@@ -103,6 +104,24 @@ impl WaylandConnection {
 
     pub fn queue(&self) -> QueueHandle<WaylandDispatcher> {
         self.event_queue.handle()
+    }
+
+    pub fn dispatch_pending(&mut self) -> std::result::Result<usize, ()> {
+        self.event_queue
+            .dispatch_pending(&mut self.dispatcher)
+            .map_err(|_| ())
+    }
+
+    pub fn blocking_dispatch(&mut self) -> std::result::Result<usize, ()> {
+        self.event_queue
+            .blocking_dispatch(&mut self.dispatcher)
+            .map_err(|_| ())
+    }
+
+    pub fn flush(&mut self) -> Result<()> {
+        self.connection
+            .flush()
+            .map_err(|e| wayland_error(format!("Flush failed: {}", e)))
     }
 }
 
@@ -251,11 +270,12 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for WaylandDispatcher {
     fn event(
         _dispatcher: &mut WaylandDispatcher,
         _proxy: &ZwlrLayerSurfaceV1,
-        _event: <ZwlrLayerSurfaceV1 as wayland_client::Proxy>::Event,
+        event: <ZwlrLayerSurfaceV1 as wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<WaylandDispatcher>,
     ) {
+        tracing::trace!("Layer surface event: {:?}", event);
     }
 }
 

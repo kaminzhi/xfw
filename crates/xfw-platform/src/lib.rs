@@ -10,17 +10,14 @@ pub mod xdg;
 use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Mutex;
 
 use buffer::{BufferConfig, BufferPool, ShmBuffer};
 use connection::WaylandConnection;
 use error::{buffer_error, Result};
 use event_loop::{EventDispatcher, EventLoop, EventSource};
-use input::{InputEvent, InputManager};
+use input::InputManager;
 use mio::event::Event;
-use surface::{
-    Anchor, KeyboardInteractivity, Layer, LayerSurface, LayerSurfaceConfig, SurfaceManager,
-};
+use surface::{LayerSurface, LayerSurfaceConfig, SurfaceManager};
 
 #[derive(Debug, Clone, Copy)]
 pub struct SurfaceGeometry {
@@ -65,6 +62,7 @@ pub enum PlatformEvent {
         size: u32,
     },
     ConfigChanged {
+        surface_id: u32,
         width: u32,
         height: u32,
     },
@@ -91,6 +89,8 @@ pub struct PlatformSurface {
     surface_geometries: HashMap<u32, SurfaceGeometry>,
 }
 
+static CONNECTION_PTR: std::sync::OnceLock<std::sync::Mutex<usize>> = std::sync::OnceLock::new();
+
 impl PlatformSurface {
     pub fn new() -> Result<Self> {
         let connection = WaylandConnection::new()?;
@@ -99,9 +99,7 @@ impl PlatformSurface {
         let default_config = BufferConfig::new(1920, 1080);
         let buffer_pool = BufferPool::new(shm, default_config);
 
-        let mut event_loop = EventLoop::new()?;
-
-        event_loop.register_fd(connection.fd(), PlatformDispatcher);
+        let event_loop = EventLoop::new()?;
 
         let (event_sender, event_receiver) = channel();
 
@@ -124,7 +122,17 @@ impl PlatformSurface {
     pub fn dispatch_loop(&mut self) -> Result<()> {
         tracing::info!("entering event loop");
 
-        self.event_loop.run(&mut PlatformDispatcher, None)
+        let wayland_fd = self.connection.fd();
+
+        let ptr = &mut self.connection as *mut WaylandConnection;
+        CONNECTION_PTR.set(std::sync::Mutex::new(ptr as usize)).ok();
+
+        let sender = self.event_sender.take().expect("event sender missing");
+
+        self.event_loop
+            .register_fd(wayland_fd, WaylandDispatcher::new(sender));
+
+        self.event_loop.run(&mut NoopDispatcher, None)
     }
 
     pub fn create_layer_surface(&mut self, config: LayerSurfaceConfig) -> Result<u32> {
@@ -237,14 +245,64 @@ impl PlatformSurface {
     pub fn quit(&mut self) {
         self.event_loop.stop();
     }
+
+    pub fn connection_mut(&mut self) -> &mut WaylandConnection {
+        &mut self.connection
+    }
 }
 
-struct PlatformDispatcher;
+struct NoopDispatcher;
 
-impl EventDispatcher for PlatformDispatcher {
+impl EventDispatcher for NoopDispatcher {
+    fn dispatch(&mut self, _source: &dyn EventSource, _event: &Event) {}
+}
+
+struct WaylandDispatcher {
+    sender: Sender<PlatformEvent>,
+}
+
+impl WaylandDispatcher {
+    fn new(sender: Sender<PlatformEvent>) -> Self {
+        Self { sender }
+    }
+}
+
+impl EventDispatcher for WaylandDispatcher {
     fn dispatch(&mut self, source: &dyn EventSource, event: &Event) {
+        let fd = source.fd();
+        tracing::trace!(fd = fd, "wayland fd event");
+
         if event.is_readable() {
-            tracing::trace!("event ready on fd");
+            if let Some(mtx) = CONNECTION_PTR.get() {
+                let mut addr = *mtx.lock().unwrap();
+                let ptr = addr as *mut WaylandConnection;
+                unsafe {
+                    let conn = &mut *ptr;
+                    match conn.dispatch_pending() {
+                        Ok(count) => {
+                            if count > 0 {
+                                tracing::trace!("dispatched {} wayland events", count);
+                            }
+                            let _ = self.sender.send(PlatformEvent::Wake);
+                        }
+                        Err(_) => {
+                            tracing::warn!("wayland event dispatch failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        if event.is_writable() {
+            if let Some(mtx) = CONNECTION_PTR.get() {
+                let mut addr = *mtx.lock().unwrap();
+                let ptr = addr as *mut WaylandConnection;
+                unsafe {
+                    if let Err(e) = (&mut *ptr).flush() {
+                        tracing::warn!("failed to flush wayland connection: {:?}", e);
+                    }
+                }
+            }
         }
     }
 }
