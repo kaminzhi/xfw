@@ -75,7 +75,7 @@ impl WaylandConnection {
             event_queue,
             globals,
             state,
-            dispatcher: WaylandDispatcher,
+            dispatcher: WaylandDispatcher::new(),
             fd,
         };
 
@@ -125,7 +125,19 @@ impl WaylandConnection {
     }
 }
 
-pub struct WaylandDispatcher;
+pub struct WaylandDispatcher {
+    pub(super) event_sender: Option<std::sync::mpsc::Sender<crate::PlatformEvent>>,
+}
+
+impl WaylandDispatcher {
+    pub fn new() -> Self {
+        Self { event_sender: None }
+    }
+
+    pub fn set_sender(&mut self, sender: std::sync::mpsc::Sender<crate::PlatformEvent>) {
+        self.event_sender = Some(sender);
+    }
+}
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandDispatcher {
     fn event(
@@ -268,7 +280,7 @@ impl Dispatch<XdgWmBase, ()> for WaylandDispatcher {
 
 impl Dispatch<ZwlrLayerSurfaceV1, ()> for WaylandDispatcher {
     fn event(
-        _dispatcher: &mut WaylandDispatcher,
+        dispatcher: &mut WaylandDispatcher,
         _proxy: &ZwlrLayerSurfaceV1,
         event: <ZwlrLayerSurfaceV1 as wayland_client::Proxy>::Event,
         _data: &(),
@@ -276,6 +288,10 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for WaylandDispatcher {
         _qh: &QueueHandle<WaylandDispatcher>,
     ) {
         tracing::trace!("Layer surface event: {:?}", event);
+
+        if let Some(sender) = &dispatcher.event_sender {
+            let _ = sender.send(crate::PlatformEvent::Wake);
+        }
     }
 }
 

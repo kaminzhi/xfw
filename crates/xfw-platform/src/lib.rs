@@ -128,9 +128,10 @@ impl PlatformSurface {
         CONNECTION_PTR.set(std::sync::Mutex::new(ptr as usize)).ok();
 
         let sender = self.event_sender.take().expect("event sender missing");
+        EVENT_SENDER.set(sender.clone()).ok();
 
         self.event_loop
-            .register_fd(wayland_fd, WaylandDispatcher::new(sender));
+            .register_fd(wayland_fd, WaylandDispatcher::new());
 
         self.event_loop.run(&mut NoopDispatcher, None)
     }
@@ -257,13 +258,13 @@ impl EventDispatcher for NoopDispatcher {
     fn dispatch(&mut self, _source: &dyn EventSource, _event: &Event) {}
 }
 
-struct WaylandDispatcher {
-    sender: Sender<PlatformEvent>,
-}
+static EVENT_SENDER: std::sync::OnceLock<Sender<PlatformEvent>> = std::sync::OnceLock::new();
+
+struct WaylandDispatcher;
 
 impl WaylandDispatcher {
-    fn new(sender: Sender<PlatformEvent>) -> Self {
-        Self { sender }
+    fn new() -> Self {
+        Self
     }
 }
 
@@ -283,7 +284,9 @@ impl EventDispatcher for WaylandDispatcher {
                             if count > 0 {
                                 tracing::trace!("dispatched {} wayland events", count);
                             }
-                            let _ = self.sender.send(PlatformEvent::Wake);
+                            if let Some(sender) = EVENT_SENDER.get() {
+                    let _ = sender.send(PlatformEvent::Wake);
+                }
                         }
                         Err(_) => {
                             tracing::warn!("wayland event dispatch failed");
